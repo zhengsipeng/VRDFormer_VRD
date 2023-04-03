@@ -1,0 +1,6 @@
+timm
+scipy
+matplotlib
+setuptools
+opencv-python
+decord
