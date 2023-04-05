@@ -83,7 +83,7 @@ def get_args_parser():
     parser.add_argument('--local_rank', default=-1, type=int) 
     
     # VidVRD
-    parser.add_argument("--task", type=str, default="tagging", choices=("tagging", "detection"))
+    parser.add_argument("--stage", type=int, default=2)
     parser.add_argument("--coco_path", type=str, default="")
     parser.add_argument("--eos_coef", default=0.1, type=float, help="Relative classification weight of the no-object class")
     parser.add_argument("--sub_loss_coef", default=0.8, type=float)
@@ -102,15 +102,24 @@ def get_args_parser():
     parser.add_argument("--track_prev_frame_rnd_augs", default=0.01, type=float)
     parser.add_argument("--track_query_false_positive_prob", default=0.1, type=float)
     parser.add_argument("--track_query_false_negative_prob", default=0.4, type=float)
-    parser.add_argument("--track_query_false_positive_eos_weight", action="store_true")
+    parser.add_argument("--track_query_false_positive_eos_weight", default=True)
     parser.add_argument("--track_query_noise", default=0., type=float)
+    parser.add_argument("--track_prev_prev_frame", default=False)
+    parser.add_argument("--track_backprop_prev_frame", default=False)
     parser.add_argument("--track_attention", action="store_true")
     
     # Deformable
     parser.add_argument("--deformable", action="store_true")
     parser.add_argument("--num_feature_levels", default=1, type=int)
-    parser.add_argument("--with_box_refine", default=True)
-    parser.add_argument("--overflow_boxes", default=True)
+    parser.add_argument("--with_box_refine", default=False)
+    parser.add_argument("--overflow_boxes", default=False)
+    parser.add_argument("--multi_frame_attention", default=False)
+    parser.add_argument("--multi_frame_encoding", default=False)
+    parser.add_argument("--merge_frame_features", default=False)
+    parser.add_argument("--multi_frame_attention_separate_encoder", default=False)
+    parser.add_argument("--dec_n_points", default=4, type=int)
+    parser.add_argument("--enc_n_points", default=4, type=int)
+    parser.add_argument("--focal_loss", default=False)
     return parser
 
 
@@ -129,17 +138,19 @@ def main(args):
     print("git:\n  {}\n".format(utils.get_sha()))
 
     device = torch.device(args.device)
-    
+
     if args.debug:
         args.num_workers = 0
     if not args.deformable:
         assert args.num_feature_levels == 1
     print(args)
 
-    if args.task == "tagging":
-        from engine import train_tagging as train_one_epoch
+    if args.stage ==1:
+        from engine import train_stage1 as train_one_epoch
     else:
-        from engine import train_detection as train_one_epoch
+        from engine import train_stage2 as train_one_epoch
+        from engine import eval_stage2 as eval_one_epoch
+    
     output_dir = Path(args.output_dir)
     if args.output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -153,7 +164,8 @@ def main(args):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
-    torch.set_deterministic(True)
+    if int(torch.__version__.split(".")[1]) <= 8:  # for torch version<=1.8
+        torch.set_deterministic(True)  
     
     model, model_without_ddp, criterion, n_parameters = model_initializer(args, device)
     
@@ -164,11 +176,6 @@ def main(args):
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
     param_initializer(args, model_without_ddp, optimizer, lr_scheduler)
     data_loader_train, sampler_train, data_loader_val = dataloader_initializer(args)
-    
-    if args.eval_mode == "evalGT":
-        from engine import evalGT_one_epoch as eval_one_epoch
-    else:
-        pass
     
     if args.eval:
         test_stats = eval_one_epoch(model, data_loader_val, device, 0, args)

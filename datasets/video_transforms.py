@@ -315,7 +315,7 @@ def resize(clip, targets, size, max_size=None):
         s2 = rescaled_clip[0].size
     else:
         raise NotImplementedError
-
+    #import pdb;pdb.set_trace()
     if targets is None:
         return rescaled_clip, None
     

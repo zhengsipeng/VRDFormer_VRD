@@ -16,7 +16,7 @@ from decord import VideoReader, cpu
 import decord
 
 
-class VrdTagging(VRDBase):
+class VidVRD(VRDBase):
     def __init__(self, 
             dbname,
             image_set,
@@ -98,6 +98,7 @@ class VrdTagging(VRDBase):
         return imgs, targets
 
     def __getitem__(self, index):   
+        
         if self.image_set=="train":
             # vidvrd: ILSVRC2015_train_00729000_0; vidor: 0000_2401075277_12
             begin_frame = self.train_begin_fids[index]
@@ -127,10 +128,10 @@ class VrdTagging(VRDBase):
             
         
         h, w = imgs.shape[1:3]
-        targets = self.get_video_gt(video_id, seq_fids, w, h)
+        targets = self.get_video_gt(video_id, seq_fids, w, h)  
         
-        imgs, targets = self.transforms(imgs, targets)
-
+        imgs, targets = self.transforms(imgs, targets)  # 3,t,h,w
+        #import pdb;pdb.set_trace()
         if self.image_set!="train":
             targets[0]['video_id'] = video_id
             targets[0]['groundtruth'] = groundtruth
@@ -155,7 +156,6 @@ class VrdTagging(VRDBase):
             'svo_ids': tensor([0, 1])
             'unscaled_sboxes', 'unscaled_oboxes':  tensor([[282.1861, 279.3351, 487.1930, 391.9286], [652.7425, 311.1363, 776.2614, 391.0691]])
         """
-        
         return imgs, targets
 
     # ========
@@ -230,7 +230,7 @@ def build_dataset(image_set, args):
 
     transforms = make_video_transforms(image_set, args.debug, args.cautious, args.by_ratio, args.resolution)
     
-    dataset = VrdTagging(
+    dataset = VidVRD(
         dbname,
         image_set,
         data_dir,

@@ -13,7 +13,7 @@ from torch import nn
 from torch.nn.init import constant_, normal_, xavier_uniform_
 from .ops.modules import MSDeformAttn
 from util.misc import inverse_sigmoid
-from models.transformer_v2 import _get_clones, _get_activation_fn
+from models.transformer import _get_clones, _get_activation_fn
         
 class DeformableTransformer(nn.Module):
     def __init__(self, d_model=512, nhead=8, 
@@ -363,7 +363,7 @@ class DeformableTransformerDecoder(nn.Module):
         return output, reference_points
        
         
-def build_transformer(args):
+def build_deformable_transformer(args):
     num_feature_levels = args.num_feature_levels
     if args.multi_frame_attention:
         num_feature_levels *= 2

@@ -1,0 +1,14 @@
+{
+    "dataset": "vidvrd",
+    "vidvrd_path" : "/home/zhengsipeng/data/vidvrd",
+    "pretrain": "data/weights/detr-r101-2c7b67e5.pth",
+    "output_dir": "data/ckpts/vidvrd_tag_frame-idx-v2",
+    "epochs": 10,
+    "lr_drop": 8,
+    "num_workers": 0,
+    "max_duration": 24,
+    "seq_len": 8,
+    "cautious": true,
+    "by_ratio": false,
+    "stage": 2
+  }

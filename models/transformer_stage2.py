@@ -8,27 +8,22 @@ Copy-paste from torch.nn.Transformer with modifications:
     * decoder returns a stack of activations from all decoding layers
 """
 import copy
+import math
 from typing import Optional
+from torchvision.ops import roi_align
 import torch
 import torch.nn.functional as F
-from torch.nn.init import normal_
 from torch import Tensor, nn
 
 
 class Transformer(nn.Module):
     def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, num_queries=100, dim_feedforward=2048, dropout=0.1,
-                 activation="relu", num_feature_levels=1,
-                 normalize_before=False, return_intermediate_dec=False,
-                 track_attention=False, multi_frame_attention_separate_encoder=False):
+                 activation="relu", normalize_before=False,
+                 return_intermediate_dec=False,
+                 track_attention=False):
         super().__init__()
-        self.num_feature_levels = num_feature_levels
-        self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))
-        self.multi_frame_attention_separate_encoder = multi_frame_attention_separate_encoder
-        enc_num_feature_levels = num_feature_levels
-        if multi_frame_attention_separate_encoder:
-            enc_num_feature_levels = enc_num_feature_levels // 2
-            
+
         encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation, normalize_before)
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
@@ -41,7 +36,7 @@ class Transformer(nn.Module):
             decoder_layer, encoder_layer, num_decoder_layers, decoder_norm,
             return_intermediate=return_intermediate_dec,
             track_attention=track_attention)
-        
+
         self._reset_parameters()
 
         self.d_model = d_model
@@ -50,69 +45,78 @@ class Transformer(nn.Module):
         # Relation Module
         self.num_queries = num_queries
         self.so_linear = nn.Linear(self.d_model*2, self.d_model)
-  
+        #self.so_pos_linear = nn.Linear(self.d_model*2, self.d_model)
+        #self.so_pos_norm = nn.LayerNorm(d_model)
+
+        # ROI Pooling
+        self.roi_output_scales = [[7,7]] #[[7, 7], [7, 7], [7, 7], [3, 3]]
+        self.downsample_scales = [32] #[8,16,32,64]
+        self.roi_pool_type = "avg"
+        if self.roi_pool_type == 'avg':
+           self.roi_pool_layer = nn.AvgPool2d(kernel_size=self.roi_output_scales[-1])
+        elif self.roi_pool_type == "max":
+           self.roi_pool_layer = nn.MaxPool2d(kernel_size=self.roi_output_scales[-1])
+
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-        normal_(self.level_embed)
+    def extract_roi_feat(self, src, boxes):
+        box_fts = roi_align(src, 
+                            torch.cat([torch.full((len(boxes), 1), 0).cuda(), boxes], dim=1), 
+                            self.roi_output_scales[-1], 
+                            spatial_scale=1./self.downsample_scales[-1], 
+                            sampling_ratio=-1
+                        )  
+        return self.roi_pool_layer(box_fts).squeeze(2).squeeze(2)
 
-    def forward(self, srcs, masks, pos_embeds, query_embed=None, targets=None):
-        src_flatten = []
-        mask_flatten = []
-        lvl_pos_embed_flatten = []
-        for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
-            bs, c, h, w = src.shape
-            src = src.flatten(2).transpose(1, 2) 
-            mask = mask.flatten(1)  
-            pos_embed = pos_embed.flatten(2).transpose(1, 2)  
-           
-            lvl_pos_embed = pos_embed + self.level_embed[lvl].view(1, 1, -1)
-            lvl_pos_embed_flatten.append(lvl_pos_embed)
-            src_flatten.append(src)
-            mask_flatten.append(mask)
-            
-        src_flatten = torch.cat(src_flatten, 1)
-        mask_flatten = torch.cat(mask_flatten, 1)    
-        lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)
-  
-        # encoder
-        src_flatten = src_flatten.transpose(0, 1)  # seq_len,bs,c
-        lvl_pos_embed_flatten = lvl_pos_embed_flatten.transpose(0, 1)
+    def prepare_tag_query(self, so_embed, targets):
+        # during relation tag, the query embed is initialized by roi feats of boxes
+        num_svo = targets["num_svo"]
+        query_sboxes = torch.zeros((self.num_queries, 4)).cuda()
+        query_oboxes = torch.zeros((self.num_queries, 4)).cuda()
+        query_embed = torch.zeros((self.num_queries, self.d_model)).cuda()
+        query_masks = torch.ones(self.num_queries).bool().cuda()
+
+        query_embed[:num_svo] = so_embed
+        query_embed = query_embed.unsqueeze(0)
+
+        query_sboxes[:num_svo] = targets["sboxes"]
+        query_oboxes[:num_svo] = targets["oboxes"]
         
-        if self.multi_frame_attention_separate_encoder:  
-            prev_memory = self.encoder(
-                src_flatten[:src_flatten.shape[0] // 2, :],
-                pos=lvl_pos_embed_flatten[:src_flatten.shape[0] // 2, :],
-                src_key_padding_mask=mask_flatten[:, :src_flatten.shape[0] // 2])
-            memory = self.encoder(
-                src_flatten[src_flatten.shape[0] // 2:, :],
-                pos=lvl_pos_embed_flatten[src_flatten.shape[0] // 2:, :],
-                src_key_padding_mask=mask_flatten[:, src_flatten.shape[0] // 2:])
-            
-            memory = torch.cat([memory, prev_memory], 0)
-        else:
-            memory = self.encoder(src_flatten, lvl_pos_embed_flatten, mask_flatten)
+        query_masks[:num_svo] = 0
+        query_masks = query_masks.unsqueeze(0)
+
+        return query_embed
+
+    def forward(self, src, mask, pos_embed, query_embed, targets):
+        if query_embed is None:
+            # individual s_embed and o_embed are extracted from the encoder
+            s_embed = self.extract_roi_feat(src, targets["unscaled_sboxes"])  
+            o_embed = self.extract_roi_feat(src, targets["unscaled_oboxes"])
+            so_embed = self.so_linear(torch.cat([s_embed, o_embed], dim=1)) 
+            query_embed = self.prepare_tag_query(so_embed, targets)
+            query_embed = query_embed.permute(1, 0, 2)
         
         # flatten NxCxHxW to HWxNxC
-        _, bs, c = memory.shape
-        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
-        query_embed, tgt = torch.split(query_embed, c, dim=2) 
+        bs, c, h, w = src.shape
+        src = src.flatten(2).permute(2, 0, 1)
+        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        mask = mask.flatten(1)
+        
+        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
         tgt = torch.zeros_like(query_embed)
-
-        if targets is not None and 'track_query_hs_embeds' in targets[0]:
-            import pdb;pdb.set_trace()
-            
+        
         hs = self.decoder( 
-            tgt,  
+            tgt, 
             memory,   
-            memory_key_padding_mask=mask_flatten,
-            pos=lvl_pos_embed_flatten, 
-            query_pos=query_embed,
+            memory_key_padding_mask=mask,
+            pos=pos_embed, 
+            query_pos=query_embed 
         )
         
-        return hs, memory, None, None
+        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w), s_embed, o_embed
 
 
 class TransformerEncoder(nn.Module):
@@ -121,13 +125,12 @@ class TransformerEncoder(nn.Module):
         self.layers = _get_clones(encoder_layer, num_layers)
         self.num_layers = num_layers
         self.norm = norm
-    
+
     def forward(self, src,
                 mask: Optional[Tensor] = None,
                 src_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None):
         output = src
-
         for layer in self.layers:
             output = layer(output, src_mask=mask,
                            src_key_padding_mask=src_key_padding_mask, pos=pos)
@@ -157,7 +160,8 @@ class TransformerDecoder(nn.Module):
                 tgt_key_padding_mask: Optional[Tensor] = None,
                 memory_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None,
-                query_pos: Optional[Tensor] = None):
+                query_pos: Optional[Tensor] = None,
+                prev_frame: Optional[dict] = None):
         output = tgt
 
         intermediate = []
@@ -165,7 +169,7 @@ class TransformerDecoder(nn.Module):
         if self.track_attention:
             track_query_pos = query_pos[:-100].clone()
             query_pos[:-100] = 0.0
-        
+
         for i, layer in enumerate(self.layers):
             if self.track_attention:
                 track_output = output[:-100].clone()
@@ -225,8 +229,8 @@ class TransformerEncoderLayer(nn.Module):
                      src_mask: Optional[Tensor] = None,
                      src_key_padding_mask: Optional[Tensor] = None,
                      pos: Optional[Tensor] = None):
-        
         q = k = self.with_pos_embed(src, pos)
+        #import pdb;pdb.set_trace()
         src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
                               key_padding_mask=src_key_padding_mask)[0]
         src = src + self.dropout1(src2)
@@ -360,10 +364,6 @@ def _get_activation_fn(activation):
 
 
 def build_transformer(args):
-    num_feature_levels = args.num_feature_levels
-    if args.multi_frame_attention:
-        num_feature_levels *= 2
-        
     return Transformer(
         d_model=args.hidden_dim,
         dropout=args.dropout,
@@ -372,9 +372,7 @@ def build_transformer(args):
         num_encoder_layers=args.enc_layers,
         num_decoder_layers=args.dec_layers,
         num_queries=args.num_queries,
-        num_feature_levels=num_feature_levels,
         normalize_before=args.pre_norm,
         return_intermediate_dec=True,
-        track_attention=args.track_attention,
-        multi_frame_attention_separate_encoder=args.multi_frame_attention_separate_encoder
+        track_attention=args.track_attention
     )

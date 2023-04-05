@@ -295,7 +295,7 @@ class NestedTensor(object):
         return self.tensors, self.mask
 
     def select_frame(self, fid):
-        return NestedTensor(self.tensors[:, fid], self.mask[:, fid])
+        return NestedTensor(self.tensors[fid].unsqueeze(0), self.mask[fid].unsqueeze(0))
 
     def __repr__(self):
         return str(self.tensors)
@@ -338,6 +338,7 @@ class NestedTensor(object):
             max_size = tuple(max(s) for s in zip(*[clip.shape for clip in tensor_list]))  
             batch_shape = (len(tensor_list),) + max_size
             b, c, t, h, w = batch_shape
+            assert b==1  # now batchsize is fixed as 1
             if do_round:
                 # Round to an even size to avoid rounding issues in fpn
                 p = 128
@@ -364,7 +365,8 @@ class NestedTensor(object):
                     cur_dur : cur_dur + clip.shape[1], : clip.shape[2], : clip.shape[3]
                 ] = False
                 cur_dur += clip.shape[1]
-            tensor, mask = tensor.reshape(b,t,c,h,w), mask.reshape(b,t,h,w)
+            #tensor, mask = tensor.reshape(b,t,c,h,w), mask.reshape(b,t,h,w) # uncomment it when batchsize>1
+            tensor, mask = tensor.reshape(t,c,h,w), mask.reshape(t,h,w)
         else:
             raise ValueError("not supported")
         
@@ -412,11 +414,6 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
         raise ValueError('not supported')
     return NestedTensor(tensor, mask)
 
-
-#def collate_fn(batch):
-#    batch = list(zip(*batch))
-#    batch[0] = nested_tensor_from_tensor_list(batch[0])
-#    return tuple(batch)
 def collate_fn(batch):
     batch = list(zip(*batch))  # [sample, target]
     batch[0] = NestedTensor.from_tensor_list(batch[0])  # sample
@@ -546,3 +543,10 @@ def viou(traj_1, duration_1, traj_2, duration_2):
     for i in range(len(traj_2)):
         v2 += (traj_2[i][2] - traj_2[i][0] + 1) * (traj_2[i][3] - traj_2[i][1] + 1)
     return float(v_overlap) / max(v1 + v2 - v_overlap, 1e-8)
+
+
+def inverse_sigmoid(x, eps=1e-5):
+    x = x.clamp(min=0, max=1)
+    x1 = x.clamp(min=eps)
+    x2 = (1 - x).clamp(min=eps)
+    return torch.log(x1/x2)

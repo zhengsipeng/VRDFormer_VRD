@@ -1,0 +1,13 @@
+{
+    "dataset": "vidvrd",
+    "vidvrd_path" : "/home/zhengsipeng/data/vidvrd",
+    "resume": "data/ckpts/default_frame-idx-v2/checkpoint0007.pth",
+    "output_dir": "data/ckpts/default_frame-idx-v2",
+    "epochs": 50,
+    "lr_drop": 40,
+    "num_workers": 0,
+    "max_duration": 24,
+    "seq_len": 8,
+    "cautious": true,
+    "by_ratio": false
+  }
