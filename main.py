@@ -90,14 +90,14 @@ def get_args_parser():
     parser.add_argument("--obj_loss_coef", default=0.8, type=float)
     parser.add_argument("--verb_loss_coef", default=5.0, type=float)
     parser.add_argument("--vidvrd_path", default="", type=str)
-    parser.add_argument("--num_verb_class", default=132, type=int)
-    parser.add_argument("--num_obj_class", default=35, type=int)
+    parser.add_argument("--num_verb_classes", default=132, type=int)
+    parser.add_argument("--num_obj_classes", default=35, type=int)
     parser.add_argument("--max_duration", default=24, type=int)
     parser.add_argument("--seq_len", default=8, type=int)
     parser.add_argument("--resolution", default="large", type=str)
     
     # Tracking
-    parser.add_argument("--tracking", action="store_true")
+    parser.add_argument("--tracking", default=False)
     parser.add_argument("--track_prev_frame_range", default=0, type=int)
     parser.add_argument("--track_prev_frame_rnd_augs", default=0.01, type=float)
     parser.add_argument("--track_query_false_positive_prob", default=0.1, type=float)

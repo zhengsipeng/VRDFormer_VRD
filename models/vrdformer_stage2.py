@@ -51,7 +51,7 @@ class VRDFormer(nn.Module):
 
     def memory_update(self, outputs, targets, memory, is_eval=False):
         if memory is None:
-            memory = {"label_sclss": {}, "label_oclss": {}, "label_vclss": {},
+            memory = {"label_sub": {}, "label_obj": {}, "label_verb": {},
                       "s_embed": {}, "o_embed": {}, "rel_embed": {},
                       "frame_ids": {}}
         
@@ -60,8 +60,8 @@ class VRDFormer(nn.Module):
         o_embed = outputs['o_embed'][:num_svo]
         hs_embed = outputs["rel_embed"][0][:num_svo]
         
-        for i in range(targets["so_traj_ids"].shape[0]):
-            so_tid = targets['so_traj_ids'][i]
+        for i in range(targets["so_track_ids"].shape[0]):
+            so_tid = targets['so_track_ids'][i]
             so_tid = "%s-%s"%(so_tid[0].cpu().item(), so_tid[1].cpu().item())
 
             if so_tid not in memory["rel_embed"]:
@@ -76,9 +76,9 @@ class VRDFormer(nn.Module):
                     memory["s_embed"][so_tid] = s_embed[i].unsqueeze(0).detach()
                     memory["o_embed"][so_tid] = o_embed[i].unsqueeze(0).detach()
                     
-                memory["label_vclss"][so_tid] = targets["vclss"][i].unsqueeze(0)
-                memory['label_sclss'][so_tid] = targets["sclss"][i]
-                memory['label_oclss'][so_tid] = targets['oclss'][i]
+                memory["label_verb"][so_tid] = targets["verb_category_ids"][i].unsqueeze(0)
+                memory['label_sub'][so_tid] = targets["sub_category_ids"][i]
+                memory['label_obj'][so_tid] = targets['obj_category_ids'][i]
             else:
                 if not is_eval:
                     memory['rel_embed'][so_tid] = torch.cat([memory['rel_embed'][so_tid], hs_embed[i].unsqueeze(0)])
@@ -89,12 +89,12 @@ class VRDFormer(nn.Module):
                     memory['rel_embed'][so_tid] = torch.cat([memory['rel_embed'][so_tid], hs_embed[i].unsqueeze(0).detach()])
                     memory['s_embed'][so_tid] = torch.cat([memory['s_embed'][so_tid], s_embed[i].unsqueeze(0).detach()])
                     memory['o_embed'][so_tid] = torch.cat([memory['o_embed'][so_tid], o_embed[i].unsqueeze(0).detach()])
-                memory["label_vclss"][so_tid] = torch.cat([memory["label_vclss"][so_tid], targets["vclss"][i].unsqueeze(0)])  
+                memory["label_verb"][so_tid] = torch.cat([memory["label_verb"][so_tid], targets["verb_category_ids"][i].unsqueeze(0)])  
                
         return memory
 
-    def relation_classifier(self, memory, gt=None, mode="gt_eval"):
-        if mode=="evalGT":
+    def relation_classifier(self, memory, gt=None, is_eval=False):
+        if is_eval:
             verb_preds, verb_scores = [], []
             for gt_triplet in gt:
                 so_id = "%d-%d"%(gt_triplet['subject_tid'], gt_triplet['object_tid'])  
@@ -109,13 +109,13 @@ class VRDFormer(nn.Module):
             return [verb_preds, verb_scores]
         
         rel_hs = memory["rel_embed"]
-        labels = memory["label_vclss"]
+        labels = memory["label_verb"]
         rel_embeds = []
         sub_labels, verb_labels, obj_labels = [], [], []
         for so_tid in rel_hs.keys():
             rel_embeds.append(rel_hs[so_tid].mean(0, keepdim=True) )  # mean pooling
-            sub_labels.append(memory["label_sclss"][so_tid])
-            obj_labels.append(memory["label_oclss"][so_tid])
+            sub_labels.append(memory["label_sub"][so_tid])
+            obj_labels.append(memory["label_obj"][so_tid])
             verb_labels.append(labels[so_tid][-1])
         rel_embeds = torch.cat(rel_embeds, dim=0)
         sub_labels = torch.stack(sub_labels)

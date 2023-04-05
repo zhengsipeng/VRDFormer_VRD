@@ -54,7 +54,6 @@ def get_coco_api_from_dataset(dataset: Subset) -> COCO:
 
 def build_dataset(split: str, args: Namespace) -> Dataset:
     """Helper function to build dataset for different splits ('train' or 'val')."""
-
     if args.dataset == "vidvrd":
         from .vidvrd import build_dataset
     else:

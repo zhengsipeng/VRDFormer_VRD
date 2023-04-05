@@ -27,14 +27,21 @@ class VidVRD(VRDBase):
             trainval_imgset_file, 
             seq_len, 
             num_quries, 
-            num_verb_class
+            num_verb_classes,
+            stage=1,
+            prev_frame=False, prev_frame_range=1, prev_frame_rnd_augs=0.0, prev_prev_frame=False
         ):
-        super().__init__(dbname, image_set, data_dir, anno_file, num_quries, num_verb_class)
+        super().__init__(dbname, image_set, data_dir, anno_file, num_quries, num_verb_classes)
         self.dbname = dbname
         self.image_set = image_set
         self.data_dir = data_dir
         self.max_duration = max_duration
         self.anno_file = anno_file
+        self.stage = stage
+        self._prev_frame = prev_frame
+        self._prev_frame_range = prev_frame_range
+        self._prev_frame_rnd_augs = prev_frame_rnd_augs
+        self._prev_prev_frame = prev_prev_frame
         
         with open(trainval_imgset_file, "r") as f:
             data = json.load(f)
@@ -61,6 +68,11 @@ class VidVRD(VRDBase):
     def __len__(self):
         return len(self.train_begin_fids) if self.image_set=="train" else len(self.val_frame_meta) # video num
 
+    def _get_anno_files(self, split):
+        anno_files = glob.glob(os.path.join(self.data_dir, 'annotations/%s/*.json'%split))
+        assert len(anno_files)>0, 'No annotation file found. Please check if the directory is correct.'
+        return anno_files
+    
     def parse_frame_name(self, frame_name):
         video_id, begin_fid = frame_name.split("-")[-2:]
         return "", video_id, begin_fid
@@ -91,18 +103,43 @@ class VidVRD(VRDBase):
             for i, gt in enumerate(targets):
                 h, w = gt["size"]
                 img_resize = torch.as_tensor([w, h, w, h])
-                targets[i]["unscaled_sboxes"] = box_cxcywh_to_xyxy(targets[i]["sboxes"]) * img_resize
-                targets[i]["unscaled_oboxes"] = box_cxcywh_to_xyxy(targets[i]["oboxes"]) * img_resize
+                targets[i]["unscaled_sub_bboxes"] = box_cxcywh_to_xyxy(targets[i]["sub_bboxes"]) * img_resize
+                targets[i]["unscaled_obj_bboxes"] = box_cxcywh_to_xyxy(targets[i]["obj_bboxes"]) * img_resize
         imgs = torch.stack(imgs)
 
         return imgs, targets
 
-    def __getitem__(self, index):   
+    def prepare_data_stage1(self, index):
+        begin_frame = self.train_begin_fids[index]
+        subid, video_id, begin_fid = self.parse_frame_name(begin_frame)
+        frame_id = int(begin_fid)
+        img = self.read_video_frame(video_id, frame_id)
+        target = self.get_video_gt(video_id, [frame_id], img)
+        img, target = self.transforms(img, target)
         
+        img = img.squeeze(1)
+        assert len(img.shape)==3 and img.shape[0]==3
+        target = target[0]
+        
+        if self._prev_frame:
+            prev_frame_id = random.randint(
+                frame_id, frame_id+min(self._prev_frame_range, self.max_durations[index]-1)
+            )
+            prev_img = self.read_video_frame(video_id, prev_frame_id)
+            prev_target = self.get_video_gt(video_id, [prev_frame_id], prev_img)
+            prev_img, prev_target = self.transforms(prev_img, prev_target)
+            prev_img = prev_img.squeeze(1)
+            assert len(prev_img.shape)==3 and prev_img.shape[0]==3
+            target[f'prev_image'] = prev_img
+            target[f'prev_target'] = prev_target[0]
+                
+        return img, target
+            
+    def prepare_data_stage2(self, index):
         if self.image_set=="train":
             # vidvrd: ILSVRC2015_train_00729000_0; vidor: 0000_2401075277_12
             begin_frame = self.train_begin_fids[index]
-            subid, video_id, begin_fid = self.parse_frame_name(begin_frame)
+            _, video_id, begin_fid = self.parse_frame_name(begin_frame)
 
             begin_fid = int(begin_fid)
             end_fid = begin_fid + self.max_durations[index]  # end_fid is not included
@@ -115,7 +152,6 @@ class VidVRD(VRDBase):
             # we randomly select 8 frames from [begin_frameid, begin_frameid+duration]
             seq_fids = sorted(clip_fids[:self.seq_len])
             imgs = clip_imgs[ [fid-begin_fid for fid in seq_fids] ] # num_frame,H,W,3 #.permute(1,2,0,3)
-            
         else:
             video_id = self.idx2vid[index]      
             groundtruth = self.get_relation_insts(video_id)
@@ -125,10 +161,8 @@ class VidVRD(VRDBase):
             seq_fids = np.argwhere(val_pos_frames).reshape(-1)
             clip_imgs = self.read_video_clip(video_id, 0, frame_count)
             imgs = clip_imgs[seq_fids]
-            
         
-        h, w = imgs.shape[1:3]
-        targets = self.get_video_gt(video_id, seq_fids, w, h)  
+        targets = self.get_video_gt(video_id, seq_fids, imgs)  
         
         imgs, targets = self.transforms(imgs, targets)  # 3,t,h,w
         #import pdb;pdb.set_trace()
@@ -139,35 +173,13 @@ class VidVRD(VRDBase):
         for i, gt in enumerate(targets):
             h, w = gt["size"]
             img_resize = torch.as_tensor([w, h, w, h])
-            targets[i]["unscaled_sboxes"] = box_cxcywh_to_xyxy(targets[i]["sboxes"]) * img_resize
-            targets[i]["unscaled_oboxes"] = box_cxcywh_to_xyxy(targets[i]["oboxes"]) * img_resize
-
-        """
-        targets is a list (len=num_frame), each element is a dict as follows:
-            'sboxes', 'oboxes': tensor([[0.8129, 0.5718, 0.1405, 0.1302], [0.4376, 0.5466, 0.2332, 0.1834]])
-            'sarea', 'oarea': tensor([23082.4492,  9873.2051])
-            'sclss', 'oclss': tensor([20, 28])
-            'so_traj_ids': tensor([[0, 1], [1, 0]])
-            'vclss': 2, num_vclss (one-hot vector)
-            'raw_vclss': [[88, 72, 0, 65], [68, 56, 111]]  
-            'orig_size': tensor([ 720, 1280])S
-            'size': tensor([614, 879])
-            'num_svo': 2
-            'svo_ids': tensor([0, 1])
-            'unscaled_sboxes', 'unscaled_oboxes':  tensor([[282.1861, 279.3351, 487.1930, 391.9286], [652.7425, 311.1363, 776.2614, 391.0691]])
-        """
+            targets[i]["unscaled_sub_bboxes"] = box_cxcywh_to_xyxy(targets[i]["sub_bboxes"]) * img_resize
+            targets[i]["unscaled_oub_bboxes"] = box_cxcywh_to_xyxy(targets[i]["obj_bboxes"]) * img_resize
+        
         return imgs, targets
 
-    # ========
-    # Test
-    # ========
-    def _get_anno_files(self, split):
-        anno_files = glob.glob(os.path.join(self.data_dir, 'annotations/%s/*.json'%split))
-        assert len(anno_files)>0, 'No annotation file found. Please check if the directory is correct.'
-        return anno_files
 
-
-def make_video_transforms(split, debug=False, cautious=True, by_ratio=False, resolution="large"):
+def make_video_transforms(split, cautious=True, by_ratio=False, resolution="large", overflow_boxes=False):
     """
     :param cautious: whether to preserve bounding box annotations in the spatial random crop
     :return: composition of spatial data transforms to be applied to every frame of a video
@@ -198,24 +210,27 @@ def make_video_transforms(split, debug=False, cautious=True, by_ratio=False, res
     scale = [0.8, 1.0]
     
     if split == "train":
-        return T.Compose(
-            horizontal
-            + [
-                T.RandomSelect(
-                    T.RandomResize(scales, max_size=max_size),
-                    T.Compose(
-                        [
-                            T.RandomResize(resizes),
-                            T.RandomSizeCrop(crop, max_size, scale, respect_boxes=cautious, by_ratio=by_ratio),
-                            T.RandomResize(scales, max_size=max_size),
-                        ]
-                    ),
+        transforms = horizontal + [
+            T.RandomSelect(
+                T.RandomResize(scales, max_size=max_size),
+                T.Compose(
+                    [
+                        T.RandomResize(resizes),
+                        T.RandomSizeCrop(crop, max_size, scale, 
+                                         respect_boxes=cautious, 
+                                         by_ratio=by_ratio,
+                                         overflow_boxes=overflow_boxes),
+                        T.RandomResize(scales, max_size=max_size),
+                    ]
                 ),
-                normalize,
-            ]
-        )
+            ),
+            normalize,
+        ]
+
     else:
-        return T.Compose([T.RandomResize(test_size, max_size=max_size), normalize])
+        transforms = [T.RandomResize(test_size, max_size=max_size), normalize]
+
+    return T.Compose(transforms)
 
     
 def build_dataset(image_set, args):
@@ -228,7 +243,18 @@ def build_dataset(image_set, args):
     anno_file = "data/metadata/%s_annotations.pkl"%dbname
     trainval_imgset_file = "data/metadata/%s_%s_frames_v2.json"%(dbname, image_set)
 
-    transforms = make_video_transforms(image_set, args.debug, args.cautious, args.by_ratio, args.resolution)
+    if image_set == 'train':
+        prev_frame_rnd_augs = args.track_prev_frame_rnd_augs
+        prev_frame_range=args.track_prev_frame_range
+    else:
+        prev_frame_rnd_augs = 0.0
+        prev_frame_range = 1
+        
+    transforms = make_video_transforms(image_set, 
+                                       args.cautious, 
+                                       args.by_ratio, 
+                                       args.resolution,
+                                       overflow_boxes=args.overflow_boxes)
     
     dataset = VidVRD(
         dbname,
@@ -240,7 +266,13 @@ def build_dataset(image_set, args):
         trainval_imgset_file=trainval_imgset_file, 
         seq_len=args.seq_len,
         num_quries=args.num_queries,
-        num_verb_class=args.num_verb_class)
+        num_verb_classes=args.num_verb_classes,
+        stage=args.stage,
+        prev_frame=args.tracking,
+        prev_frame_range=prev_frame_range,
+        prev_frame_rnd_augs=prev_frame_rnd_augs, 
+        prev_prev_frame=args.track_prev_prev_frame
+    )
 
         
     return dataset

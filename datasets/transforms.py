@@ -15,7 +15,7 @@ from util.box_ops import box_xyxy_to_cxcywh
 from util.misc import interpolate
 
 
-def crop(image, target, region):
+def crop(image, target, region, overflow_boxes=False):
     i, j, h, w = region
     target = target.copy()
 
@@ -35,8 +35,22 @@ def crop(image, target, region):
         boxes = target["boxes"]
         max_size = torch.as_tensor([w, h], dtype=torch.float32)
         cropped_boxes = boxes - torch.as_tensor([j, i, j, i])
-        cropped_boxes = torch.min(cropped_boxes.reshape(-1, 2, 2), max_size)
-        cropped_boxes = cropped_boxes.clamp(min=0)
+        if overflow_boxes:
+            for i, box in enumerate(cropped_boxes):
+                l, t, r, b = box
+                if l < 0 and r < 0:
+                    l = r = 0
+                if l > w and r > w:
+                    l = r = w
+                if t < 0 and b < 0:
+                    t = b = 0
+                if t > h and b > h:
+                    t = b = h
+                cropped_boxes[i] = torch.tensor([l, t, r, b], dtype=box.dtype)
+            cropped_boxes = cropped_boxes.reshape(-1, 2, 2)
+        else:
+            cropped_boxes = torch.min(cropped_boxes.reshape(-1, 2, 2), max_size)
+            cropped_boxes = cropped_boxes.clamp(min=0)
         area = (cropped_boxes[:, 1, :] - cropped_boxes[:, 0, :]).prod(dim=1)
         target["boxes"] = cropped_boxes.reshape(-1, 4)
         target["area"] = area
@@ -229,7 +243,8 @@ class RandomCrop:
 class RandomSizeCrop:
     def __init__(self,
                  min_size: Union[tuple, list, int],
-                 max_size: Union[tuple, list, int] = None):
+                 max_size: Union[tuple, list, int] = None,
+                 overflow_boxes: bool = False):
         if isinstance(min_size, int):
             min_size = (min_size, min_size)
         if isinstance(max_size, int):
@@ -237,6 +252,7 @@ class RandomSizeCrop:
 
         self.min_size = min_size
         self.max_size = max_size
+        self.overflow_boxes = overflow_boxes
 
     def __call__(self, img: PIL.Image.Image, target: dict):
         if self.max_size is None:
@@ -251,7 +267,7 @@ class RandomSizeCrop:
                 min(img.height, self.max_size[1]))
 
         region = T.RandomCrop.get_params(img, [h, w])
-        return crop(img, target, region)
+        return crop(img, target, region, self.overflow_boxes)
 
 
 class CenterCrop:

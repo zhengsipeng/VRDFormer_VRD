@@ -20,17 +20,18 @@ class ConvertCocoPolysToMask(object):
         onehot_label = torch.eye(self.num_verb_class)[index]
         onehot_label = onehot_label.sum(0)
         return onehot_label
-
-    def __call__(self, anno, w, h):
-        sboxes = torch.as_tensor(anno["sboxes"], dtype=torch.float32).reshape(-1, 4)
-        oboxes = torch.as_tensor(anno["oboxes"], dtype=torch.float32).reshape(-1, 4) 
         
+    def __call__(self, imgs, anno):
+        h, w = imgs.shape[1:3]
+   
+        sboxes = torch.as_tensor(anno["sub_bboxes"], dtype=torch.float32).reshape(-1, 4)
+        oboxes = torch.as_tensor(anno["obj_bboxes"], dtype=torch.float32).reshape(-1, 4) 
+  
         sboxes[:, 0::2].clamp_(min=0, max=w)
         sboxes[:, 1::2].clamp_(min=0, max=h)
         oboxes[:, 0::2].clamp_(min=0, max=w)
         oboxes[:, 1::2].clamp_(min=0, max=h)
-
-        
+   
         keep = (sboxes[:, 3] > sboxes[:, 1]) & (sboxes[:, 2] > sboxes[:, 0]) \
                 & (oboxes[:, 3] > oboxes[:, 1]) & (oboxes[:, 2] > oboxes[:, 0])
         
@@ -43,23 +44,25 @@ class ConvertCocoPolysToMask(object):
         oarea = (_oboxes[:, 1, :] - _oboxes[:, 0, :]).prod(dim=1)
         assert sboxes.shape[0] == oboxes.shape[0]
 
-        sclss = torch.as_tensor(anno["sclss"])[keep]
-        oclss = torch.as_tensor(anno["oclss"])[keep]
+        sclss = torch.as_tensor(anno["sub_category_ids"])[keep]
+        oclss = torch.as_tensor(anno["obj_category_ids"])[keep]
 
-        so_traj_ids = torch.as_tensor(anno["so_traj_ids"])[keep]
+        so_track_ids = torch.as_tensor(anno["so_track_ids"])[keep]
         
-        raw_vclss = anno["vclss"]
+        raw_vclss = anno["verb_category_ids"]
         vclss = [self.get_one_hot(raw_vclss[i]) for i, flag in enumerate(keep) if flag]
         vclss = torch.stack(vclss)
-        target = {"sboxes": sboxes, "oboxes": oboxes, "sarea": sarea, "oarea": oarea,
-                  "sclss": sclss, "oclss": oclss, "so_traj_ids": so_traj_ids, 
-                  "vclss": vclss, "raw_vclss": raw_vclss}
+
+        target = {"sub_bboxes": sboxes, "obj_bboxes": oboxes, 
+                  "sub_area": sarea, "obj_area": oarea,
+                  "sub_category_ids": sclss, "obj_category_ids": oclss, "so_track_ids": so_track_ids, 
+                  "verb_category_ids": vclss, "raw_verb_category_ids": raw_vclss}
         
         for k in target.keys():
             target[k] = target[k][:self.num_queries]
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])
-        target["num_svo"] = len(anno["vclss"])
+        target["num_inst"] = len(anno["verb_category_ids"])
 
         return target
 
@@ -88,6 +91,20 @@ class VRDBase(Dataset):
     def fid2int(self, frame_ids):
         raise NotImplementedError
 
+    def is_cls_mismatch(self, video_id, begin_fid, end_fid):
+        begin_anno = self.annotations[video_id]["frame_annos"][begin_fid]
+        end_anno = self.annotations[video_id]['frame_annos'][end_fid]
+        begin_so_ids, end_so_ids = begin_anno['so_track_ids'], end_anno['so_track_ids']
+        assert len(begin_so_ids)==len(end_so_ids)
+        for i, begin_so_id in enumerate(begin_so_ids):
+            import pdb;pdb.set_trace()
+            
+    def read_video_frame(self, video_id, frame_id):
+        video_path = os.path.join(self.data_dir, "videos", video_id+".mp4")
+        vr = VideoReader(video_path, ctx=cpu(0))
+        img_arrays = vr.get_batch([frame_id]).asnumpy()
+        return img_arrays
+        
     def read_video_clip(self, video_id, begin_fid, end_fid):
         video_path = os.path.join(self.data_dir, "videos", video_id+'.mp4')
         vr = VideoReader(video_path, ctx=cpu(0))
@@ -95,26 +112,18 @@ class VRDBase(Dataset):
         img_arrays = vr.get_batch(frame_idx).asnumpy()
         #img_arrays = img_arrays.permute(0, 3, 1, 2)
         return img_arrays
-
-    def is_cls_mismatch(self, video_id, begin_fid, end_fid):
-        begin_anno = self.annotations[video_id]["frame_annos"][begin_fid]
-        end_anno = self.annotations[video_id]['frame_annos'][end_fid]
-        begin_so_ids, end_so_ids = begin_anno['so_traj_ids'], end_anno['so_traj_ids']
-        assert len(begin_so_ids)==len(end_so_ids)
-        for i, begin_so_id in enumerate(begin_so_ids):
-            import pdb;pdb.set_trace()
-
-    def get_video_gt(self, video_id, seq_fids, w, h):
+        
+    def get_video_gt(self, video_id, seq_fids, img):
         targets = []
         for seq_fid in seq_fids:
             if self.dbname == "vidvrd":
                 anno = self.annotations[video_id]["frame_annos"][seq_fid]
             else:
                 anno = self.annotations[seq_fid]
-            target = self.prepare(anno, w, h)
+            target = self.prepare(img, anno)
             target['video_id'] = video_id
             target["frame_id"] = int(seq_fid)
-            target["svo_ids"] = torch.arange(len(target['vclss']))
+            target["inst_ids"] = torch.arange(len(target['verb_category_ids']))
             targets.append(target)
             
         return targets
@@ -127,8 +136,11 @@ class VRDBase(Dataset):
             triplets.update(inst['triplet'] for inst in insts)
         return triplets
     
-    def __getitem__(self, index):
-        return index
+    def __getitem__(self, index):   
+        if self.stage==1:
+            return self.prepare_data_stage1(index)
+        else:
+            return self.prepare_data_stage2(index)
 
     # ==========
     # Test
