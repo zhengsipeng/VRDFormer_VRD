@@ -32,7 +32,6 @@ def get_args_parser():
     parser.add_argument("--eval_skip", default=1, type=int, help='do evaluation every "eval_skip" frames')
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--vis_and_log_interval", default=10, type=int)
-
     parser.add_argument("--schedule", default="linear_with_warmup", type=str, choices=("step", "multistep", "linear_with_warmup", "all_linear_with_warmup"))
     parser.add_argument("--ema", action="store_true")
     parser.add_argument("--ema_decay", type=float, default=0.9998)
@@ -71,7 +70,6 @@ def get_args_parser():
     parser.add_argument("--resume_shift_neuron", action="store_true")
     parser.add_argument("--pretrain", default="", help="load pretrain from checkpoint")
     parser.add_argument("--start-epoch", default=0, type=int, metavar="N", help="start epoch")
-    
     parser.add_argument("--num_workers", default=0, type=int)
 
     # Dataset Specific
@@ -85,16 +83,28 @@ def get_args_parser():
     # VidVRD
     parser.add_argument("--stage", type=int, default=2)
     parser.add_argument("--coco_path", type=str, default="")
-    parser.add_argument("--eos_coef", default=0.1, type=float, help="Relative classification weight of the no-object class")
-    parser.add_argument("--sub_loss_coef", default=0.8, type=float)
-    parser.add_argument("--obj_loss_coef", default=0.8, type=float)
-    parser.add_argument("--verb_loss_coef", default=5.0, type=float)
     parser.add_argument("--vidvrd_path", default="", type=str)
     parser.add_argument("--num_verb_classes", default=132, type=int)
     parser.add_argument("--num_obj_classes", default=35, type=int)
     parser.add_argument("--max_duration", default=24, type=int)
     parser.add_argument("--seq_len", default=8, type=int)
     parser.add_argument("--resolution", default="large", type=str)
+    
+    # Matcher
+    parser.add_argument('--set_cost_class', default=1, type=float, help="Class coefficient in the matching cost")
+    parser.add_argument('--set_cost_bbox', default=5, type=float, help="L1 box coefficient in the matching cost")
+    parser.add_argument('--set_cost_giou', default=2, type=float, help="giou box coefficient in the matching cost")
+    parser.add_argument('--set_cost_sub_class', default=0.5, type=float, help="Object class coefficient in the matching cost")
+    parser.add_argument('--set_cost_obj_class', default=0.5, type=float, help="Object class coefficient in the matching cost")
+    parser.add_argument('--set_cost_verb_class', default=1, type=float, help="Verb class coefficient in the matching cost")
+    
+    # Loss coefficients
+    parser.add_argument("--sub_loss_coef", default=0.5, type=float)
+    parser.add_argument("--obj_loss_coef", default=0.5, type=float)
+    parser.add_argument("--verb_loss_coef", default=1, type=float)
+    parser.add_argument('--bbox_loss_coef', default=5, type=float)
+    parser.add_argument('--giou_loss_coef', default=2, type=float)
+    parser.add_argument("--eos_coef", default=0.1, type=float, help="Relative classification weight of the no-object class")
     
     # Tracking
     parser.add_argument("--tracking", default=False)
@@ -120,6 +130,9 @@ def get_args_parser():
     parser.add_argument("--dec_n_points", default=4, type=int)
     parser.add_argument("--enc_n_points", default=4, type=int)
     parser.add_argument("--focal_loss", default=False)
+    parser.add_argument("--focal_alpha", default=0.25, type=float)
+    parser.add_argument("--focal_gamma", default=2, type=float)
+    
     return parser
 
 

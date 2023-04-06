@@ -3,6 +3,7 @@
     "vidvrd_path" : "/home/zhengsipeng/data/vidvrd",
     "pretrain": "data/weights/detr-r101-2c7b67e5.pth",
     "output_dir": "data/ckpts/det_frame-idx-v2",
+    "batch_size": 3,
     "epochs": 50,
     "lr_drop": 40,
     "num_workers": 0,
@@ -16,5 +17,7 @@
     "merge_frame_features": false,
     "multi_frame_attention_separate_encoder": true,
     "position_embedding": "sine_3d_v2",
-    "num_feature_levels": 1
+    "num_feature_levels": 1,
+    "tracking": true,
+    "track_prev_frame_range": 8
   }

@@ -73,7 +73,7 @@ class Transformer(nn.Module):
 
     def prepare_tag_query(self, so_embed, targets):
         # during relation tag, the query embed is initialized by roi feats of boxes
-        num_svo = targets["num_svo"]
+        num_svo = targets["num_inst"]
         query_sboxes = torch.zeros((self.num_queries, 4)).cuda()
         query_oboxes = torch.zeros((self.num_queries, 4)).cuda()
         query_embed = torch.zeros((self.num_queries, self.d_model)).cuda()
@@ -82,8 +82,8 @@ class Transformer(nn.Module):
         query_embed[:num_svo] = so_embed
         query_embed = query_embed.unsqueeze(0)
 
-        query_sboxes[:num_svo] = targets["sboxes"]
-        query_oboxes[:num_svo] = targets["oboxes"]
+        query_sboxes[:num_svo] = targets["sub_boxes"]
+        query_oboxes[:num_svo] = targets["obj_boxes"]
         
         query_masks[:num_svo] = 0
         query_masks = query_masks.unsqueeze(0)
@@ -93,8 +93,8 @@ class Transformer(nn.Module):
     def forward(self, src, mask, pos_embed, query_embed, targets):
         if query_embed is None:
             # individual s_embed and o_embed are extracted from the encoder
-            s_embed = self.extract_roi_feat(src, targets["unscaled_sboxes"])  
-            o_embed = self.extract_roi_feat(src, targets["unscaled_oboxes"])
+            s_embed = self.extract_roi_feat(src, targets["unscaled_sub_boxes"])  
+            o_embed = self.extract_roi_feat(src, targets["unscaled_obj_boxes"])
             so_embed = self.so_linear(torch.cat([s_embed, o_embed], dim=1)) 
             query_embed = self.prepare_tag_query(so_embed, targets)
             query_embed = query_embed.permute(1, 0, 2)

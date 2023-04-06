@@ -52,7 +52,7 @@ class VRDFormer(nn.Module):
         
         self.sub_class_embed = nn.Linear(hidden_dim, num_obj_classes+1)
         self.obj_class_embed = nn.Linear(hidden_dim, num_obj_classes+1)
-        self.verb_class_embed = nn.Linear(hidden_dim, num_verb_classes+1)
+        self.verb_class_embed = nn.Linear(hidden_dim, num_verb_classes)
         self.sub_bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.obj_bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         
@@ -136,6 +136,8 @@ class VRDFormer(nn.Module):
                - samples.tensors: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
         """
+        if not isinstance(samples, NestedTensor):
+            samples = NestedTensor.from_tensor_list(samples) 
         features, pos = self.backbone(samples)  # [2,2048,20,24], [2,256,20,24]
         features_all = features # 2, C, H, W
         features = features[-3:]
@@ -200,13 +202,16 @@ class VRDFormer(nn.Module):
                                     src_list, mask_list, pos_list, 
                                     query_embed, 
                                     targets)
+        
         if not self.deformable:
+            hs = hs.transpose(1, 2)
             memory = memory.transpose(0, 1)
             
         outputs_sub_classes, outputs_obj_classes, outputs_verb_classes = [], [], []
         outputs_sub_coords, outputs_obj_coords = [], []
         
         for lvl in range(hs.shape[0]):
+            
             if self.deformable:
                 if lvl == 0:
                     reference = init_reference
@@ -220,13 +225,15 @@ class VRDFormer(nn.Module):
             
             tmp_s = self.sub_bbox_embed[lvl](hs[lvl])
             tmp_o = self.obj_bbox_embed[lvl](hs[lvl])
-            if reference.shape[-1] == 4:
-                tmp_s += reference
-                tmp_o += reference
-            else:
-                assert reference.shape[-1] == 2
-                tmp_s[..., :2] += reference
-                tmp_o[..., :2] += reference
+            
+            if self.deformable:
+                if reference.shape[-1] == 4:
+                    tmp_s += reference
+                    tmp_o += reference
+                else:
+                    assert reference.shape[-1] == 2
+                    tmp_s[..., :2] += reference
+                    tmp_o[..., :2] += reference
             
             outputs_sub_coord = tmp_s.sigmoid()
             outputs_obj_coord = tmp_o.sigmoid()
@@ -265,7 +272,7 @@ class VRDFormer(nn.Module):
             memory_slices.append(memory_slice)
             offset += height * width
         memory = memory_slices
-        import pdb;pdb.set_trace()
+        
         return out, targets, features_all, memory, hs
         
         

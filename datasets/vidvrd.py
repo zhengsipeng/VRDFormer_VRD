@@ -6,14 +6,10 @@ import pickle as pkl
 import numpy as np
 import torch
 import torch.utils.data
-import torch.nn as nn
-from PIL import Image
 from pathlib import Path
 from . import video_transforms as T
 from util.box_ops import box_cxcywh_to_xyxy
 from datasets.dataset import VRDBase
-from decord import VideoReader, cpu
-import decord
 
 
 class VidVRD(VRDBase):
@@ -103,8 +99,8 @@ class VidVRD(VRDBase):
             for i, gt in enumerate(targets):
                 h, w = gt["size"]
                 img_resize = torch.as_tensor([w, h, w, h])
-                targets[i]["unscaled_sub_bboxes"] = box_cxcywh_to_xyxy(targets[i]["sub_bboxes"]) * img_resize
-                targets[i]["unscaled_obj_bboxes"] = box_cxcywh_to_xyxy(targets[i]["obj_bboxes"]) * img_resize
+                targets[i]["unscaled_sub_boxes"] = box_cxcywh_to_xyxy(targets[i]["sub_boxes"]) * img_resize
+                targets[i]["unscaled_obj_boxes"] = box_cxcywh_to_xyxy(targets[i]["obj_boxes"]) * img_resize
         imgs = torch.stack(imgs)
 
         return imgs, targets
@@ -173,8 +169,8 @@ class VidVRD(VRDBase):
         for i, gt in enumerate(targets):
             h, w = gt["size"]
             img_resize = torch.as_tensor([w, h, w, h])
-            targets[i]["unscaled_sub_bboxes"] = box_cxcywh_to_xyxy(targets[i]["sub_bboxes"]) * img_resize
-            targets[i]["unscaled_oub_bboxes"] = box_cxcywh_to_xyxy(targets[i]["obj_bboxes"]) * img_resize
+            targets[i]["unscaled_sub_boxes"] = box_cxcywh_to_xyxy(targets[i]["sub_boxes"]) * img_resize
+            targets[i]["unscaled_oub_boxes"] = box_cxcywh_to_xyxy(targets[i]["obj_boxes"]) * img_resize
         
         return imgs, targets
 

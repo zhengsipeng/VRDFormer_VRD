@@ -24,8 +24,8 @@ class ConvertCocoPolysToMask(object):
     def __call__(self, imgs, anno):
         h, w = imgs.shape[1:3]
    
-        sboxes = torch.as_tensor(anno["sub_bboxes"], dtype=torch.float32).reshape(-1, 4)
-        oboxes = torch.as_tensor(anno["obj_bboxes"], dtype=torch.float32).reshape(-1, 4) 
+        sboxes = torch.as_tensor(anno["sub_boxes"], dtype=torch.float32).reshape(-1, 4)
+        oboxes = torch.as_tensor(anno["obj_boxes"], dtype=torch.float32).reshape(-1, 4) 
   
         sboxes[:, 0::2].clamp_(min=0, max=w)
         sboxes[:, 1::2].clamp_(min=0, max=h)
@@ -44,25 +44,26 @@ class ConvertCocoPolysToMask(object):
         oarea = (_oboxes[:, 1, :] - _oboxes[:, 0, :]).prod(dim=1)
         assert sboxes.shape[0] == oboxes.shape[0]
 
-        sclss = torch.as_tensor(anno["sub_category_ids"])[keep]
-        oclss = torch.as_tensor(anno["obj_category_ids"])[keep]
+        sclss = torch.as_tensor(anno["sub_labels"])[keep]  # not -1 in VidVRD and VidOR
+        oclss = torch.as_tensor(anno["obj_labels"])[keep]
 
         so_track_ids = torch.as_tensor(anno["so_track_ids"])[keep]
         
-        raw_vclss = anno["verb_category_ids"]
+        raw_vclss = anno["verb_labels"]
         vclss = [self.get_one_hot(raw_vclss[i]) for i, flag in enumerate(keep) if flag]
         vclss = torch.stack(vclss)
 
-        target = {"sub_bboxes": sboxes, "obj_bboxes": oboxes, 
+        target = {"sub_boxes": sboxes, "obj_boxes": oboxes, 
                   "sub_area": sarea, "obj_area": oarea,
-                  "sub_category_ids": sclss, "obj_category_ids": oclss, "so_track_ids": so_track_ids, 
-                  "verb_category_ids": vclss, "raw_verb_category_ids": raw_vclss}
+                  "sub_labels": sclss, "obj_labels": oclss, "verb_labels": vclss, 
+                  "raw_verb_labels": raw_vclss, "so_track_ids": so_track_ids, 
+                  }
         
         for k in target.keys():
             target[k] = target[k][:self.num_queries]
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])
-        target["num_inst"] = len(anno["verb_category_ids"])
+        target["num_inst"] = len(anno["verb_labels"])
 
         return target
 
@@ -123,7 +124,7 @@ class VRDBase(Dataset):
             target = self.prepare(img, anno)
             target['video_id'] = video_id
             target["frame_id"] = int(seq_fid)
-            target["inst_ids"] = torch.arange(len(target['verb_category_ids']))
+            target["inst_ids"] = torch.arange(len(target['verb_labels']))
             targets.append(target)
             
         return targets

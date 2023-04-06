@@ -430,7 +430,7 @@ def target_to_cuda(target):
     for k, v in target.items():        
         if isinstance(v, int) or isinstance(v, dict) or isinstance(v, str) or k=="groundtruth":
             _target[k] = v
-        elif k in ["vclss", "raw_vclss"]:
+        elif k in ["verb_labels", "raw_verb_labels"]:
             _target[k] = [torch.as_tensor(verb).cuda(non_blocking=True) for verb in v]
         else:
             _target[k] = v.cuda(non_blocking=True)

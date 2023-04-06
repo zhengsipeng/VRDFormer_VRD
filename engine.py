@@ -125,12 +125,10 @@ def train_stage1(model, criterion, data_loader, optimizer, device, epoch, args):
         if args.debug:
             debug_and_vis(args.datasets, samples, targets, i) 
         
-        if not isinstance(samples, NestedTensor):
-            samples = NestedTensor.from_tensor_list(samples) 
-        samples = samples.to(device)  # 1,t,3,h,w
-        assert len(targets)==1
-        targets = [target_to_cuda(t) for t in targets[0]]
-        import pdb;pdb.set_trace()
+        samples = samples.to(device)  # bs,3,h,w
+        
+        targets = [target_to_cuda(t) for t in targets]
+        
         # samples [2,3,H,W]
         # targets: [xxx, xxx]
         # 'boxes', 'labels', 'image_id', 'track_ids', 'area', 'iscrowd', 
@@ -141,6 +139,7 @@ def train_stage1(model, criterion, data_loader, optimizer, device, epoch, args):
         # in order to be able to modify targets inside the forward call we need
         # to pass it through as torch.nn.parallel.DistributedDataParallel only
         # passes copies
+        
         outputs, targets, *_ = model(samples, targets)
         
         loss_dict = criterion(outputs, targets)

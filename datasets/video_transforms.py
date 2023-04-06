@@ -209,7 +209,7 @@ class Normalize(object):
         targets = targets.copy()
         h, w = video.shape[-2:]
         #if "boxes" in targets[0]:  
-        for box_k in ["sub_bboxes", "obj_bboxes"]: # apply for every image of the clip
+        for box_k in ["sub_boxes", "obj_boxes"]: # apply for every image of the clip
             for i_tgt in range(len(targets)):
                 boxes = targets[i_tgt][box_k]
                 boxes = box_xyxy_to_cxcywh(boxes)
@@ -227,7 +227,7 @@ def hflip(clip, targets):
         w, h = clip[0].size
 
     targets = targets.copy()
-    for box_k in ["sub_bboxes", "oub_bboxes"]:  # apply for every image of the clip
+    for box_k in ["sub_boxes", "oub_boxes"]:  # apply for every image of the clip
         for i_tgt in range(len(targets)):
             boxes = targets[i_tgt][box_k]
             boxes = boxes[:, [2, 1, 0, 3]] * torch.as_tensor(
@@ -324,7 +324,7 @@ def resize(clip, targets, size, max_size=None):
     
     targets = targets.copy()
     
-    for box_k in ["sub_bboxes", "obj_bboxes"]:
+    for box_k in ["sub_boxes", "obj_boxes"]:
         for i_tgt in range(len(targets)):  # apply for every image of the clip
             boxes = targets[i_tgt][box_k]
             scaled_boxes = boxes * torch.as_tensor(
@@ -369,13 +369,13 @@ def crop(clip, orig_targets, region, target_only=False, overflow_boxes=False):
         targets[i_tgt]["size"] = torch.tensor([h, w])
 
     fields = ['sub_area', 'obj_area', 'so_track_ids', 
-              'sub_category_ids', 'obj_category_ids', 'verb_category_ids', 'raw_verb_category_ids', 
+              'sub_labels', 'obj_labels', 'verb_labels', 'raw_verb_labels', 
               'orig_size', 'size', 'num_inst', 'inst_ids']
     
     for so_k in ["sub", "obj"]:
-        if so_k+"_bboxes" in targets[0]:
+        if so_k+"_boxes" in targets[0]:
             for i_tgt in range(len(targets)):  # apply for every image of the clip
-                boxes = targets[i_tgt][so_k+"_bboxes"]
+                boxes = targets[i_tgt][so_k+"_boxes"]
                 max_size = torch.as_tensor([w, h], dtype=torch.float32)
                 cropped_boxes = boxes - torch.as_tensor([j, i, j, i])
                 if overflow_boxes:
@@ -395,9 +395,9 @@ def crop(clip, orig_targets, region, target_only=False, overflow_boxes=False):
                     cropped_boxes = torch.min(cropped_boxes.reshape(-1, 2, 2), max_size)
                     cropped_boxes = cropped_boxes.clamp(min=0)
                 area = (cropped_boxes[:, 1, :] - cropped_boxes[:, 0, :]).prod(dim=1)
-                targets[i_tgt][so_k+"_bboxes"] = cropped_boxes.reshape(-1, 4)
+                targets[i_tgt][so_k+"_boxes"] = cropped_boxes.reshape(-1, 4)
                 targets[i_tgt][so_k+"_area"] = area
-            fields.append(so_k+"_bboxes")
+            fields.append(so_k+"_boxes")
         else:
             raise ValueError
         
@@ -406,9 +406,9 @@ def crop(clip, orig_targets, region, target_only=False, overflow_boxes=False):
     # this is compatible with previous implementation
 
     for i_tgt in range(len(targets)):
-        cropped_boxes = targets[i_tgt]["sub_bboxes"].reshape(-1, 2, 2)
+        cropped_boxes = targets[i_tgt]["sub_boxes"].reshape(-1, 2, 2)
         s_keep = torch.all(cropped_boxes[:, 1, :] > cropped_boxes[:, 0, :], dim=1)
-        cropped_boxes = targets[i_tgt]["obj_bboxes"].reshape(-1, 2, 2)
+        cropped_boxes = targets[i_tgt]["obj_boxes"].reshape(-1, 2, 2)
         o_keep = torch.all(cropped_boxes[:, 1, :] > cropped_boxes[:, 0, :], dim=1)
         
         keep = s_keep*o_keep
@@ -417,7 +417,7 @@ def crop(clip, orig_targets, region, target_only=False, overflow_boxes=False):
             if field in targets[i_tgt]:   
                 if field in ["orig_size", "size"]:
                     continue
-                elif field == "raw_verb_category_ids":
+                elif field == "raw_verb_labels":
                     targets[i_tgt][field] = [targets[i_tgt][field][i] for i in range(len(keep)) if keep[i]==True]
                 elif field == "num_inst":
                     targets[i_tgt][field] = keep.sum()
@@ -466,8 +466,8 @@ class RandomSizeCrop(object):
             region = i, j, h, w
             result_targets = crop(clip, targets, region, target_only=True)
            
-            sbox_sum = sum(len(result_targets[i_patience]["sub_bboxes"]) for i_patience in range(len(result_targets)))
-            obox_sum = sum(len(result_targets[i_patience]["obj_bboxes"]) for i_patience in range(len(result_targets)))
+            sbox_sum = sum(len(result_targets[i_patience]["sub_boxes"]) for i_patience in range(len(result_targets)))
+            obox_sum = sum(len(result_targets[i_patience]["obj_boxes"]) for i_patience in range(len(result_targets)))
             if (sbox_sum==init_sboxes) and (obox_sum==init_oboxes): # make sure 
                 result_clip, result_targets = crop(clip, targets, region)
                 return result_clip, result_targets
@@ -476,8 +476,8 @@ class RandomSizeCrop(object):
 
     def __call__(self, clip, targets: dict):
         orig_targets = copy.deepcopy(targets)  # used to conserve ALL BOXES ANYWAY
-        init_sboxes = sum(len(targets[i_tgt]["sub_bboxes"]) for i_tgt in range(len(targets)))
-        init_oboxes = sum(len(targets[i_tgt]["obj_bboxes"]) for i_tgt in range(len(targets)))
+        init_sboxes = sum(len(targets[i_tgt]["sub_boxes"]) for i_tgt in range(len(targets)))
+        init_oboxes = sum(len(targets[i_tgt]["obj_boxes"]) for i_tgt in range(len(targets)))
         max_patience = 100  # TODO: maybe it is gonna requery lots of time with a clip than an image as it involves more boxes
         
         if isinstance(clip[0], PIL.Image.Image):
@@ -513,8 +513,8 @@ class RandomSizeCrop(object):
             #result_clip, result_targets = crop(clip, targets, region)
             result_targets = crop(clip, targets, region, target_only=True,
                                   overflow_boxes=self.overflow_boxes)  # to speed up sbox/obox_sum calculation, only crop target
-            sbox_sum = sum(len(result_targets[i_patience]["sub_bboxes"])for i_patience in range(len(result_targets)))
-            obox_sum = sum(len(result_targets[i_patience]["obj_bboxes"])for i_patience in range(len(result_targets)))
+            sbox_sum = sum(len(result_targets[i_patience]["sub_boxes"])for i_patience in range(len(result_targets)))
+            obox_sum = sum(len(result_targets[i_patience]["obj_boxes"])for i_patience in range(len(result_targets)))
             
             if (not self.respect_boxes) or ((sbox_sum==init_sboxes) and (obox_sum==init_oboxes)):
                 result_clip, result_targets = crop(clip, targets, region)
