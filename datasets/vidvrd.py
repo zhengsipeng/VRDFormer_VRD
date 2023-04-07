@@ -107,27 +107,31 @@ class VidVRD(VRDBase):
 
     def prepare_data_stage1(self, index):
         begin_frame = self.train_begin_fids[index]
-        subid, video_id, begin_fid = self.parse_frame_name(begin_frame)
+        _, video_id, begin_fid = self.parse_frame_name(begin_frame)
         frame_id = int(begin_fid)
         img = self.read_video_frame(video_id, frame_id)
         target = self.get_video_gt(video_id, [frame_id], img)
         img, target = self.transforms(img, target)
-        
         img = img.squeeze(1)
         assert len(img.shape)==3 and img.shape[0]==3
         target = target[0]
         
         if self._prev_frame:
-            prev_frame_id = random.randint(
+            prev_img = img
+            prev_target = target
+            
+            post_frame_id = random.randint(
                 frame_id, frame_id+min(self._prev_frame_range, self.max_durations[index]-1)
             )
-            prev_img = self.read_video_frame(video_id, prev_frame_id)
-            prev_target = self.get_video_gt(video_id, [prev_frame_id], prev_img)
-            prev_img, prev_target = self.transforms(prev_img, prev_target)
-            prev_img = prev_img.squeeze(1)
-            assert len(prev_img.shape)==3 and prev_img.shape[0]==3
+            
+            img = self.read_video_frame(video_id, post_frame_id)
+            target = self.get_video_gt(video_id, [post_frame_id], img)
+            img, target = self.transforms(img, target)
+            img = img.squeeze(1)
+            assert len(img.shape)==3 and img.shape[0]==3
+            target = target[0]
             target[f'prev_image'] = prev_img
-            target[f'prev_target'] = prev_target[0]
+            target[f'prev_target'] = prev_target
                 
         return img, target
             
@@ -237,12 +241,13 @@ def build_dataset(image_set, args):
     data_dir = args.vidvrd_path
     max_duration = args.max_duration
     anno_file = "data/metadata/%s_annotations.pkl"%dbname
-    trainval_imgset_file = "data/metadata/%s_%s_frames_v2.json"%(dbname, image_set)
 
     if image_set == 'train':
+        trainval_imgset_file = "data/metadata/%s_%s_frames_stage%d.json"%(dbname, image_set, args.stage)
         prev_frame_rnd_augs = args.track_prev_frame_rnd_augs
         prev_frame_range=args.track_prev_frame_range
     else:
+        trainval_imgset_file = "data/metadata/%s_%s_frames_v2.json"%(dbname, image_set)
         prev_frame_rnd_augs = 0.0
         prev_frame_range = 1
         

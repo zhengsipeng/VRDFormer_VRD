@@ -46,9 +46,10 @@ class ConvertCocoPolysToMask(object):
 
         sclss = torch.as_tensor(anno["sub_labels"])[keep]  # not -1 in VidVRD and VidOR
         oclss = torch.as_tensor(anno["obj_labels"])[keep]
-
-        so_track_ids = torch.as_tensor(anno["so_track_ids"])[keep]
         
+        so_track_ids = torch.as_tensor(anno["so_track_ids"])[keep]
+        so_track_ids[:, 0]
+       
         raw_vclss = anno["verb_labels"]
         vclss = [self.get_one_hot(raw_vclss[i]) for i, flag in enumerate(keep) if flag]
         vclss = torch.stack(vclss)
@@ -57,6 +58,7 @@ class ConvertCocoPolysToMask(object):
                   "sub_area": sarea, "obj_area": oarea,
                   "sub_labels": sclss, "obj_labels": oclss, "verb_labels": vclss, 
                   "raw_verb_labels": raw_vclss, "so_track_ids": so_track_ids, 
+                  "sub_track_ids": so_track_ids[:, 0], "obj_track_ids": so_track_ids[:, 1]
                   }
         
         for k in target.keys():
