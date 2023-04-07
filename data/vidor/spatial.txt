@@ -1,0 +1,8 @@
+above
+away
+behind
+beneath
+in_front_of
+inside
+next to
+toward
