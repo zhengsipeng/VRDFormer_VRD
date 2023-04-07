@@ -75,13 +75,13 @@ class VRDFormer(nn.Module):
                 ))
                 in_channels = self.hidden_dim
             self.input_proj = nn.ModuleList(input_proj_list)
-        else:
+        else:       
             self.input_proj = nn.ModuleList([
                 nn.Sequential(
                     nn.Conv2d(num_channels[0], self.hidden_dim, kernel_size=1),
                     nn.GroupNorm(32, self.hidden_dim),
                 )])
-        
+
         # prepare prediction head
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
@@ -95,7 +95,7 @@ class VRDFormer(nn.Module):
         for proj in self.input_proj:
             nn.init.xavier_uniform_(proj[0].weight, gain=1)
             nn.init.constant_(proj[0].bias, 0)
-        
+            
         num_pred = transformer.decoder.num_layers
         if with_box_refine:
             self.sub_class_embed = _get_clones(self.sub_class_embed, num_pred)

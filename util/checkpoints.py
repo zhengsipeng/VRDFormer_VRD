@@ -109,7 +109,12 @@ def resume_value(model_state_dict, checkpoint_state_dict):
                 elif "bias" in k:
                     checkpoint_k = "input_proj.bias"
                 checkpoint_value = checkpoint_state_dict[checkpoint_k]  
-                resume_value = checkpoint_value
+                if v.shape==checkpoint_value.shape:
+                    resume_value = checkpoint_value
+                else:
+                    resume_state_dict[k] = v
+                    print(f'Load {k} {tuple(v.shape)} from scratch.')
+                    continue
             else:
                 resume_state_dict[k] = v
                 print(f'Load {k} {tuple(v.shape)} from scratch.')
@@ -179,8 +184,5 @@ def param_initializer(args, model_without_ddp, optimizer, lr_scheduler):
                                                         args.resume_shift_neuron)
         else:
             resume_state_dict = resume_value(model_state_dict, checkpoint_state_dict)
-        
-        
+                
         model_without_ddp.load_state_dict(resume_state_dict)
-        import pdb;pdb.set_trace()
-        
