@@ -12,3 +12,5 @@ We refer to our [docs/INSTALL.md](docs/INSTALL.md) for detailed installation ins
 
 ## Train VRDFormer
 Later on
+
+## Evaluate VRDFormer
