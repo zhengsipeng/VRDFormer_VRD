@@ -426,11 +426,11 @@ def collate_fn_val(batch):
 
 def target_to_cuda(target):
     _target = {}
-
-    for k, v in target.items():        
+    for k, v in target.items():     
         if isinstance(v, int) or isinstance(v, dict) or isinstance(v, str) or k=="groundtruth":
             _target[k] = v
-        elif k in ["verb_labels", "raw_verb_labels"]:
+        #elif k in ["verb_labels", "raw_verb_labels"]:
+        elif k == "raw_verb_labels":
             _target[k] = [torch.as_tensor(verb).cuda(non_blocking=True) for verb in v]
         else:
             _target[k] = v.cuda(non_blocking=True)

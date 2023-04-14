@@ -100,9 +100,16 @@ class Transformer(nn.Module):
         query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
         query_embed, tgt = torch.split(query_embed, c, dim=2) 
         tgt = torch.zeros_like(query_embed)
-
+        
+        # prepare input for decoder
         if targets is not None and 'track_query_hs_embeds' in targets[0]:
-            import pdb;pdb.set_trace()
+            prev_hs_embed = torch.stack([t['track_query_hs_embeds'] for t in targets])
+            prev_hs_embed = prev_hs_embed.transpose(0, 1)
+            prev_query_embed = torch.zeros_like(prev_hs_embed)
+            
+            prev_tgt = prev_hs_embed
+            query_embed = torch.cat([prev_query_embed, query_embed], dim=0)
+            tgt = torch.cat([prev_tgt, tgt], dim=0)
             
         hs = self.decoder( 
             tgt,  

@@ -19,5 +19,6 @@
     "position_embedding": "sine_3d_v2",
     "num_feature_levels": 1,
     "tracking": true,
-    "track_prev_frame_range": 8
+    "track_prev_frame_range": 8,
+    "focal_loss": true
   }

@@ -174,6 +174,7 @@ class SetCriterion(nn.Module):
                  weight_dict, 
                  eos_coef, 
                  losses,
+                 focal_loss, focal_alpha, focal_gamma,
                  track_query_false_positive_eos_weight
                 ):
         super().__init__()
@@ -187,21 +188,17 @@ class SetCriterion(nn.Module):
         self.register_buffer('empty_weight', empty_weight)
         self.track_query_false_positive_eos_weight = track_query_false_positive_eos_weight
 
-    def loss_sub_labels(self, outputs, log=True):
-        assert "pred_sub_logits" in outputs
-        src_logits, sub_labels = outputs["pred_sub_logits"], outputs["label_sub_classes"]
-        losses = {"loss_sub_ce": F.cross_entropy(src_logits, sub_labels)}
-        if log:
-            losses["sub_class_acc"] = accuracy(src_logits, sub_labels)[0]
+    def loss_labels(self, outputs, log=True):
+        assert "pred_sub_logits" in outputs and "pred_obj_logits" in outputs
         
-        return losses
-
-    def loss_obj_labels(self, outputs, log=True):
-        assert "pred_obj_logits" in outputs
-        src_logits, obj_labels = outputs["pred_obj_logits"], outputs["label_obj_classes"]
-        losses = {"loss_obj_ce": F.cross_entropy(src_logits, obj_labels)}
-        if log:
-            losses["obj_class_acc"] = accuracy(src_logits, obj_labels)[0]
+        losses = {}
+        for role in ["sub", "obj"]:
+            src_logits = outputs["pred_%s_logits"%role]
+            labels = outputs["label_%s_classes"%role]
+            losses = {"loss_%s_ce"%role: F.cross_entropy(src_logits, labels)}
+            if log:
+                losses["%s_class_acc"%role] = accuracy(src_logits, labels)[0]
+        
         return losses
 
     def loss_verb_labels(self, outputs, log=True):
@@ -215,8 +212,7 @@ class SetCriterion(nn.Module):
 
     def get_loss(self, loss, outputs, **kwards):
         loss_map = {
-                    "sub_labels": self.loss_sub_labels,
-                    "obj_labels": self.loss_obj_labels, 
+                    "labels": self.loss_labels,
                     "verb_labels": self.loss_verb_labels
                     }
         assert loss in loss_map, f"do you really wnat to compute {loss} loss?"

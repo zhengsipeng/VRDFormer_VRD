@@ -106,15 +106,14 @@ class VidVRD(VRDBase):
         return imgs, targets
 
     def prepare_data_stage1(self, index):
+        random_state = {  
+            'random': random.getstate(),
+            'torch': torch.random.get_rng_state()}
+        
         begin_frame = self.train_begin_fids[index]
         _, video_id, begin_fid = self.parse_frame_name(begin_frame)
         frame_id = int(begin_fid)
-        img = self.read_video_frame(video_id, frame_id)
-        target = self.get_video_gt(video_id, [frame_id], img)
-        img, target = self.transforms(img, target)
-        img = img.squeeze(1)
-        assert len(img.shape)==3 and img.shape[0]==3
-        target = target[0]
+        img, target = self.getitem_from_id(video_id, frame_id, random_state)
         
         if self._prev_frame:
             prev_img = img
@@ -123,13 +122,8 @@ class VidVRD(VRDBase):
             post_frame_id = random.randint(
                 frame_id, frame_id+min(self._prev_frame_range, self.max_durations[index]-1)
             )
+            img, target = self.getitem_from_id(video_id, post_frame_id, random_state)
             
-            img = self.read_video_frame(video_id, post_frame_id)
-            target = self.get_video_gt(video_id, [post_frame_id], img)
-            img, target = self.transforms(img, target)
-            img = img.squeeze(1)
-            assert len(img.shape)==3 and img.shape[0]==3
-            target = target[0]
             target[f'prev_image'] = prev_img
             target[f'prev_target'] = prev_target
                 

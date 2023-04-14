@@ -131,7 +131,7 @@ class VRDFormer(nn.Module):
         return [{'pred_sub_logits': a, 'pred_sub_boxes': b, 'pred_obj_logits': c, 'pred_obj_boxes': d}
                 for a, b, c, d in zip(outputs_sub_class[:-1], outputs_sub_coord[:-1], outputs_obj_class[:-1], outputs_obj_coord[:-1])]
 
-    def forward(self, samples: NestedTensor, targets: list = None, prev_features=None): 
+    def forward(self, samples: NestedTensor, targets: list = None, prev_features=None, stage=1): 
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensors: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -154,7 +154,7 @@ class VRDFormer(nn.Module):
         frame_features = [prev_features, features]  # 2,3,2,C,H,W
         if not self.multi_frame_attention:
             frame_features = [features]
-            
+
         for frame, frame_feat in enumerate(frame_features):
             if self.multi_frame_attention and self.multi_frame_encoding:
                 pos_list.extend([p[:, frame] for p in pos[-3:]])  # 3,2,c,H,W
@@ -287,67 +287,3 @@ class VRDFormer(nn.Module):
                  zip(outputs_sub_class[:-1], outputs_obj_class[:-1], outputs_verb_class[:-1], 
                      outputs_sub_coord[:-1], outputs_obj_coord[:-1])]
         
-        
-class SetCriterion(nn.Module):
-    def __init__(self, 
-                 num_obj_class, 
-                 matcher, 
-                 weight_dict, 
-                 eos_coef, 
-                 losses,
-                 track_query_false_positive_eos_weight
-                ):
-        super().__init__()
-        self.num_obj_class = num_obj_class
-        self.matcher = matcher
-        self.weight_dict = weight_dict
-        self.eos_coef = eos_coef
-        self.losses = losses
-        empty_weight = torch.ones(self.num_obj_class + 1)
-        empty_weight[-1] = self.eos_coef
-        self.register_buffer('empty_weight', empty_weight)
-        self.track_query_false_positive_eos_weight = track_query_false_positive_eos_weight
-
-    def loss_sub_labels(self, outputs, log=True):
-        assert "pred_sub_logits" in outputs
-        src_logits, sub_labels = outputs["pred_sub_logits"], outputs["label_sub_classes"]
-        losses = {"loss_sub_ce": F.cross_entropy(src_logits, sub_labels)}
-        if log:
-            losses["sub_class_acc"] = accuracy(src_logits, sub_labels)[0]
-        
-        return losses
-
-    def loss_obj_labels(self, outputs, log=True):
-        assert "pred_obj_logits" in outputs
-        src_logits, obj_labels = outputs["pred_obj_logits"], outputs["label_obj_classes"]
-        losses = {"loss_obj_ce": F.cross_entropy(src_logits, obj_labels)}
-        if log:
-            losses["obj_class_acc"] = accuracy(src_logits, obj_labels)[0]
-        return losses
-
-    def loss_verb_labels(self, outputs, log=True):
-        assert "pred_verb_logits" in outputs
-        src_logits, verb_labels = outputs["pred_verb_logits"], outputs["label_verb_classes"]
-        loss_verb_ce = F.binary_cross_entropy_with_logits(src_logits, verb_labels)
-        losses = {"loss_verb_ce": loss_verb_ce}
-        if log:
-            losses["verb_class_acc"] = multi_label_acc(src_logits, verb_labels)
-        return losses
-
-    def get_loss(self, loss, outputs, **kwards):
-        loss_map = {
-                    "sub_labels": self.loss_sub_labels,
-                    "obj_labels": self.loss_obj_labels, 
-                    "verb_labels": self.loss_verb_labels
-                    }
-        assert loss in loss_map, f"do you really wnat to compute {loss} loss?"
-        return loss_map[loss](outputs, **kwards)
-
-    def forward(self, outputs, targets):
-        import pdb;pdb.set_trace()
-        losses = {}
-        for loss in self.losses:
-            losses.update(self.get_loss(loss, outputs))
-        return losses
-
-    

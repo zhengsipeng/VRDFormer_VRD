@@ -173,10 +173,24 @@ class DeformableTransformer(nn.Module):
         tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
         
         reference_points = self.reference_points(query_embed).sigmoid()  # 2,500,2
-        init_reference_out = reference_points
         
         if targets is not None and 'track_query_hs_embeds' in targets[0]:
-            import pdb;pdb.set_trace()
+            prev_hs_embed = torch.stack([t['track_query_hs_embeds'] for t in targets])
+            prev_sub_boxes = torch.stack([t['track_query_sub_boxes'] for t in targets])
+            prev_obj_boxes = torch.stack([t['track_query_obj_boxes'] for t in targets])
+            
+            prev_query_embed = torch.zeros_like(prev_hs_embed)
+            
+            prev_tgt = prev_hs_embed
+            
+            query_embed = torch.cat([prev_query_embed, query_embed], dim=1)
+            tgt = torch.cat([prev_tgt, tgt], dim=1)
+            
+            prev_boxes = (prev_sub_boxes[..., :2] + prev_obj_boxes[..., :2]) / 2
+            reference_points = torch.cat([prev_boxes, reference_points], dim=1)
+        
+        init_reference_out = reference_points
+        
         hs, inter_references = self.decoder(
             tgt, reference_points, memory, spatial_shapes,
             valid_ratios, query_embed, mask_flatten, query_attn_mask) # hs: 6,2,500,288
@@ -184,6 +198,7 @@ class DeformableTransformer(nn.Module):
         inter_references_out = inter_references
 
         return hs, memory, init_reference_out, inter_references_out
+    
     
 class DeformableTransformerEncoderLayer(nn.Module):
     def __init__(self,
@@ -322,8 +337,11 @@ class DeformableTransformerDecoder(nn.Module):
         self.num_layers = num_layers
         self.return_intermediate = return_intermediate
         # hack implementation for iterative bounding box refinement and two-stage Deformable DETR
-        self.bbox_embed = None
-        self.class_embed = None
+        self.sub_bbox_embed = None
+        self.obj_bbox_embed = None
+        self.sub_class_embed = None
+        self.obj_class_embed = None
+        self.verb_class_embed = None
 
     def forward(self, tgt, reference_points, src, src_spatial_shapes, src_valid_ratios,
                 query_pos=None, src_padding_mask=None, query_attn_mask=None):

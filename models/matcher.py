@@ -43,13 +43,13 @@ class HungarianMatcher(nn.Module):
         self.cost_giou = cost_giou
         self.focal_loss = focal_loss
         self.focal_alpha = focal_alpha
-        self.flocal_gamma = focal_gamma
+        self.focal_gamma = focal_gamma
         
         assert cost_sub_class != 0 or cost_obj_class != 0 or cost_verb_class != 0 or \
                cost_bbox != 0 or cost_giou != 0, "all costs cant be 0"
 
     @torch.no_grad()
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets, stage=1):
         """ Performs the matching
 
         Params:
@@ -90,7 +90,7 @@ class HungarianMatcher(nn.Module):
         # [batch_size * num_queries, 4]
         out_sub_bbox = outputs["pred_sub_boxes"].flatten(0, 1)
         out_obj_bbox = outputs["pred_obj_boxes"].flatten(0, 1)
-        
+
         # Also concat the target labels and boxes
         tgt_sub_ids = torch.cat([v["sub_labels"] for v in targets])
         tgt_obj_ids = torch.cat([v["obj_labels"] for v in targets])
@@ -145,19 +145,21 @@ class HungarianMatcher(nn.Module):
         for i, target in enumerate(targets):
             if 'track_query_match_ids' not in target:
                 continue
-
             prop_i = 0
-            for j, mask_value in enumerate(target['track_queries_match_mask']):
-                if mask_value.item() == 1:
+            for j in range(cost_matrix.shape[1]):
+                if target['track_queries_fal_pos_mask'][j]:
+                    # false positive and palceholder track queries should not
+                    # be matched to any target
+                    cost_matrix[i, j] = np.inf
+                elif target['track_queries_mask'][j]:
                     track_query_id = target['track_query_match_ids'][prop_i]
                     prop_i += 1
 
                     cost_matrix[i, j] = np.inf
                     cost_matrix[i, :, track_query_id + sum(sizes[:i])] = np.inf
                     cost_matrix[i, j, track_query_id + sum(sizes[:i])] = -1
-                elif mask_value.item() == -1:
-                    cost_matrix[i, j] = np.inf
         
+        # cost_matric: bs,num_query,tgt_size
         indices = [linear_sum_assignment(c[i]) for i, c in enumerate(cost_matrix.split(sizes, -1))]
 
         return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))

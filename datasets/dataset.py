@@ -1,4 +1,5 @@
 import os
+import random
 import numpy as np
 import torch
 import json
@@ -101,12 +102,27 @@ class VRDBase(Dataset):
         assert len(begin_so_ids)==len(end_so_ids)
         for i, begin_so_id in enumerate(begin_so_ids):
             import pdb;pdb.set_trace()
+    
+    def getitem_from_id(self, video_id, frame_id, random_state=None):
+        if random_state is not None:
+            curr_random_state = {
+                'random': random.getstate(),
+                'torch': torch.random.get_rng_state()
+            }
+            random.setstate(random_state['random'])
+            torch.random.set_rng_state(random_state['torch'])
             
-    def read_video_frame(self, video_id, frame_id):
         video_path = os.path.join(self.data_dir, "videos", video_id+".mp4")
         vr = VideoReader(video_path, ctx=cpu(0))
         img_arrays = vr.get_batch([frame_id]).asnumpy()
-        return img_arrays
+        
+        target = self.get_video_gt(video_id, [frame_id], img_arrays)
+        img, target = self.transforms(img_arrays, target)
+        img = img.squeeze(1)
+        assert len(img.shape)==3 and img.shape[0]==3
+        target = target[0]
+        
+        return img, target        
         
     def read_video_clip(self, video_id, begin_fid, end_fid):
         video_path = os.path.join(self.data_dir, "videos", video_id+'.mp4')
