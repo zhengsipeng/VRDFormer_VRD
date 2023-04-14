@@ -126,9 +126,8 @@ def train_stage1(model, criterion, data_loader, optimizer, device, epoch, args):
             debug_and_vis(args.datasets, samples, targets, i) 
         
         samples = samples.to(device)  # bs,3,h,w
-        
         targets = [target_to_cuda(t) for t in targets]
-        
+        #import pdb;pdb.set_trace()
         # samples [2,3,H,W]
         # targets: [xxx, xxx]
         # 'boxes', 'labels', 'image_id', 'track_ids', 'area', 'iscrowd', 
@@ -141,7 +140,7 @@ def train_stage1(model, criterion, data_loader, optimizer, device, epoch, args):
         # passes copies
         
         outputs, targets, *_ = model(samples, targets)
-        
+        #import pdb;pdb.set_trace()
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)

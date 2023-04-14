@@ -99,8 +99,7 @@ def get_args_parser():
     parser.add_argument('--set_cost_verb_class', default=1, type=float, help="Verb class coefficient in the matching cost")
     
     # Loss coefficients
-    parser.add_argument("--sub_loss_coef", default=0.5, type=float)
-    parser.add_argument("--obj_loss_coef", default=0.5, type=float)
+    parser.add_argument("--obj_loss_coef", default=1, type=float)
     parser.add_argument("--verb_loss_coef", default=1, type=float)
     parser.add_argument('--bbox_loss_coef', default=5, type=float)
     parser.add_argument('--giou_loss_coef', default=2, type=float)
