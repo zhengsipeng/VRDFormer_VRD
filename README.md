@@ -11,6 +11,14 @@ on two benchmark datasets, ImageNet-VidVRD and VidOR, demonstrate the effectiven
 We refer to our [docs/INSTALL.md](docs/INSTALL.md) for detailed installation instructions.
 
 ## Train VRDFormer
-Later on
+Train VidVRD based on detr with 8GPUs and batchsize=32
+```
+sh script/stage/train_mgpu.sh
+```
+
+Train VidVRD based on deformable detr
+```
+sh script/stage/train_deform_mgpu.sh
+```
 
 ## Evaluate VRDFormer
