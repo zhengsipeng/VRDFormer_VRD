@@ -4,7 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .base import MLP
-from util.misc import NestedTensor, accuracy, multi_label_acc, inverse_sigmoid
+from util.misc import NestedTensor
+from util.compute import inverse_sigmoid
 
 
 def _get_clones(module, N):

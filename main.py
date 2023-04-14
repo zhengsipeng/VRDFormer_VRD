@@ -147,7 +147,7 @@ def main(args):
             cfg = json.load(f)
         d.update(cfg)
 
-    print("git:\n  {}\n".format(utils.get_sha()))
+    print("git:\n  {}\n".format(dist.get_sha()))
 
     device = torch.device(args.device)
 

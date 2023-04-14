@@ -5,8 +5,9 @@ import torch.nn.functional as F
 from contextlib import nullcontext
 from .matcher import HungarianMatcher
 from .vrdformer import VRDFormer
-from util.misc import (NestedTensor, is_dist_avail_and_initialized, get_world_size,
-                       accuracy, multi_label_acc)
+from util.dist import get_world_size, is_dist_avail_and_initialized
+from util.misc import NestedTensor
+from util.compute import accuracy, multi_label_acc
 
 
 class TrackingBase(nn.Module):

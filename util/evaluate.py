@@ -1,5 +1,5 @@
 import numpy as np
-from .misc import viou, voc_ap
+from .compute import viou, voc_ap
 from collections import defaultdict, OrderedDict
     
     
