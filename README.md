@@ -13,15 +13,28 @@ We refer to our [docs/DATA.md](docs/DATA.md) for detailed installation instructi
 ## Installation
 We refer to our [docs/INSTALL.md](docs/INSTALL.md) for detailed installation instructions.
 
-## Train VRDFormer
-Train VidVRD based on detr with 8GPUs and batchsize=32
+## Train VRDFormer on VidVRD
+- Train VidVRD based on detr with 8GPUs and batchsize=32
 ```
-sh script/stage/train_mgpu.sh
-```
-
-Train VidVRD based on deformable detr
-```
-sh script/stage/train_deform_mgpu.sh
+sh script/stage1/train_mgpu.sh
+sh script/stage2/train_mgpu.sh
 ```
 
-## Evaluate VRDFormer
+- Train VidVRD based on deformable detr
+```
+sh script/stage1/train_deform_mgpu.sh
+sh script/stage2/train_deform_mgpu.sh
+```
+
+## Train VRDFormer on VidVRD
+Train VidOR based on detr with 8GPUs and batchsize=64
+```
+sh script/stage1/train_mgpu_vidor.sh
+sh script/stage2/train_mgpu_vidor.sh
+```
+
+Train VidOR based on deformable detr
+```
+sh script/stage1/train_deform_mgpu_vidor.sh
+sh script/stage2/train_deform_mgpu_vidor.sh
+```
