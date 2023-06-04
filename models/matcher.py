@@ -84,7 +84,7 @@ class HungarianMatcher(nn.Module):
         else:
             out_sub_prob = outputs["pred_sub_logits"].flatten(0, 1).softmax(-1)
             out_obj_prob = outputs["pred_obj_logits"].flatten(0, 1).softmax(-1)
-            
+        
         out_verb_prob = outputs['pred_verb_logits'].flatten(0, 1).sigmoid()
         
         # [batch_size * num_queries, 4]
@@ -97,7 +97,7 @@ class HungarianMatcher(nn.Module):
         tgt_verb_ids = torch.cat([v["verb_labels"] for v in targets])
         
         tgt_sub_bbox = torch.cat([v["sub_boxes"] for v in targets])
-        tgt_obj_bbox = torch.cat([v["obj_boxes"] for v in targets])
+        tgt_obj_bbox = torch.cat([v["obj_boxes"] for v in targets])  
         
         # Compute the classification cost.
         if self.focal_loss:
@@ -115,7 +115,7 @@ class HungarianMatcher(nn.Module):
             cost_obj_class = -out_obj_prob[:, tgt_obj_ids]
         
         tgt_verb_ids_permute = tgt_verb_ids.permute(1, 0)
-        
+       
         cost_verb_class = -(out_verb_prob.matmul(tgt_verb_ids_permute) / ( \
                                 tgt_verb_ids_permute.sum(dim=0, keepdim=True) + 1e-4) + \
                                 (1 - out_verb_prob).matmul(1 - tgt_verb_ids_permute) / \
@@ -146,7 +146,7 @@ class HungarianMatcher(nn.Module):
             if 'track_query_match_ids' not in target:
                 continue
             prop_i = 0
-            for j in range(cost_matrix.shape[1]):
+            for j in range(cost_matrix.shape[1]): 
                 if target['track_queries_fal_pos_mask'][j]:
                     # false positive and palceholder track queries should not
                     # be matched to any target
@@ -160,8 +160,8 @@ class HungarianMatcher(nn.Module):
                     cost_matrix[i, j, track_query_id + sum(sizes[:i])] = -1
         
         # cost_matric: bs,num_query,tgt_size
-        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(cost_matrix.split(sizes, -1))]
-
+        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(cost_matrix.split(sizes, -1))]  # bsz,200, [sizes] -> [query_id] [pair target id]
+        
         return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
                 for i, j in indices]
 

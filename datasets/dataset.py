@@ -1,13 +1,16 @@
 import os
 import random
+import pickle as pkl
 import numpy as np
 import torch
 import json
+import glob
 from tqdm import tqdm
 from collections import defaultdict
 from torch.utils.data import Dataset
 from decord import VideoReader, cpu
-import decord
+from util.box_ops import box_cxcywh_to_xyxy
+from . import video_transforms as T
 
 
 class ConvertCocoPolysToMask(object):
@@ -73,72 +76,81 @@ class ConvertCocoPolysToMask(object):
 
 class VRDBase(Dataset):
     def __init__(self, 
-            dbname, 
+            dbname,
             image_set,
             data_dir, 
-            anno_file,
+            max_duration,
+            anno_file, 
+            transforms, 
+            trainval_imgset_file, 
+            seq_len, 
             num_quries, 
-            num_verb_class
+            num_verb_classes,
+            stage,
+            prev_frame, prev_frame_range, prev_frame_rnd_augs, prev_prev_frame, debug=False
         ):
         super().__init__()
         self.dbname = dbname
         self.image_set = image_set
         self.data_dir = data_dir
         self.anno_file = anno_file
-        self.prepare = ConvertCocoPolysToMask(num_quries, num_verb_class)
+        self.prepare = ConvertCocoPolysToMask(num_quries, num_verb_classes)
         self.normalize_coords = True
-        self.load_raw_annotations(image_set)
         
-    def parse_frame_name(self, frame_name):
-        raise NotImplementedError
+        self.max_duration = max_duration
+        self.stage = stage
+        self._prev_frame = prev_frame
+        self._prev_frame_range = prev_frame_range
+        self._prev_frame_rnd_augs = prev_frame_rnd_augs
+        self._prev_prev_frame = prev_prev_frame
+        
+        with open(trainval_imgset_file, "r") as f:
+            data = json.load(f)
+        
+        if not debug:
+            self.load_raw_annotations(image_set) 
+        
+        print('[info] loading processed annotations...')
+        with open(self.anno_file, "rb") as f:
+            self.annotations = pkl.load(f)
 
-    def fid2int(self, frame_ids):
-        raise NotImplementedError
-
-    def is_cls_mismatch(self, video_id, begin_fid, end_fid):
-        begin_anno = self.annotations[video_id]["frame_annos"][begin_fid]
-        end_anno = self.annotations[video_id]['frame_annos'][end_fid]
-        begin_so_ids, end_so_ids = begin_anno['so_track_ids'], end_anno['so_track_ids']
-        assert len(begin_so_ids)==len(end_so_ids)
-        for i, begin_so_id in enumerate(begin_so_ids):
-            import pdb;pdb.set_trace()
+        self.video_ids = [vid.split(".")[0] for vid in os.listdir(self.data_dir+"/annotations/%s"%self.image_set)]
     
-    def getitem_from_id(self, video_id, frame_id, random_state=None):
-        if random_state is not None:
-            curr_random_state = {
-                'random': random.getstate(),
-                'torch': torch.random.get_rng_state()
-            }
-            random.setstate(random_state['random'])
-            torch.random.set_rng_state(random_state['torch'])
+        if self.image_set == "train":
+            self.train_begin_fids, self.max_durations = data["train_begin_fids"], data["durations"]
+        else:
+            if self.normalize_coords:
+                print('[info] bounding boxes are normalized to [0, 1]')
+    
+            self.val_frame_meta = data
+            self.idx2vid = dict(zip(range(len(self.val_frame_meta)), self.val_frame_meta.keys()))    
             
-        video_path = os.path.join(self.data_dir, "videos", video_id+".mp4")
-        vr = VideoReader(video_path, ctx=cpu(0))
-        img_arrays = vr.get_batch([frame_id]).asnumpy()
+        self.clip_duration = [7,15,31] #clip_duration  # [7,15,31]
+        self.seq_len = seq_len  # default: 8
+        self.transforms = transforms
+    
+    def __len__(self):
+        return len(self.train_begin_fids) if self.image_set=="train" else len(self.val_frame_meta) # video num
+    
+    def __getitem__(self, index):   
+        if self.stage==1:
+            return self.prepare_data_stage1(index)
+        else:
+            return self.prepare_data_stage2(index)
         
-        target = self.get_video_gt(video_id, [frame_id], img_arrays)
-        img, target = self.transforms(img_arrays, target)
-        img = img.squeeze(1)
-        assert len(img.shape)==3 and img.shape[0]==3
-        target = target[0]
-        
-        return img, target        
-        
-    def read_video_clip(self, video_id, begin_fid, end_fid):
-        video_path = os.path.join(self.data_dir, "videos", video_id+'.mp4')
-        vr = VideoReader(video_path, ctx=cpu(0))
-        frame_idx = np.linspace(begin_fid, end_fid-1, num=end_fid-begin_fid).astype(int)
-        img_arrays = vr.get_batch(frame_idx).asnumpy()
-        #img_arrays = img_arrays.permute(0, 3, 1, 2)
-        return img_arrays
-        
+    def get_anno_files(self, split):
+        anno_files = glob.glob(os.path.join(self.data_dir, 'annotations/%s/*.json'%split))
+        assert len(anno_files)>0, 'No annotation file found. Please check if the directory is correct.'
+        return anno_files
+    
     def get_video_gt(self, video_id, seq_fids, img):
         targets = []
+    
+        img = img[: 1]
+
         for seq_fid in seq_fids:
-            if self.dbname == "vidvrd":
-                anno = self.annotations[video_id]["frame_annos"][seq_fid]
-            else:
-                anno = self.annotations[seq_fid]
+            anno = self.annotations[video_id]["frame_annos"][seq_fid]
+
             target = self.prepare(img, anno)
             target['video_id'] = video_id
             target["frame_id"] = int(seq_fid)
@@ -146,6 +158,72 @@ class VRDBase(Dataset):
             targets.append(target)
             
         return targets
+    
+    def getitem_from_id(self, video_id, frame_ids):
+        video_path = os.path.join(self.data_dir, "videos", video_id+".mp4")
+        vr = VideoReader(video_path, ctx=cpu(0))
+        img_arrays = vr.get_batch(frame_ids).asnumpy()  # t,h,w,3
+        
+        targets = self.get_video_gt(video_id, frame_ids, img_arrays)
+        
+        img, targets = self.transforms(img_arrays, targets)
+        if len(targets) > 2:
+            return img, targets
+
+        target = targets[1]
+        target[f'prev_target'] = targets[0]
+        target[f'prev_image'] = img[:, 0]
+
+        img = img[:, 1]
+ 
+        assert len(img.shape)==3 and img.shape[0]==3
+       
+        return img, target      
+    
+    def prepare_data_stage1(self, index):
+        begin_frame = self.train_begin_fids[index]
+        _, video_id, begin_fid = self.parse_frame_name(begin_frame)
+        frame_id = int(begin_fid)
+        post_frame_id = random.randint(
+                frame_id, frame_id+min(self._prev_frame_range, self.max_durations[index]-1)
+            )
+        img, target = self.getitem_from_id(video_id, [frame_id, post_frame_id])
+       
+        assert target[f'prev_image'].shape == img.shape
+
+        return img, target
+    
+    def prepare_data_stage2(self, index):
+        
+        if self.image_set=="train":
+            begin_frame = self.train_begin_fids[index]
+            _, video_id, begin_fid = self.parse_frame_name(begin_frame)
+
+            begin_fid = int(begin_fid)
+            end_fid = begin_fid + self.max_durations[index]  # end_fid is not included
+            frame_ids =  list(range(begin_fid, end_fid)) 
+            frame_ids = frame_ids+frame_ids if len(frame_ids)<8 else frame_ids
+            seq_fids = sorted(random.sample(frame_ids, self.seq_len))
+            
+            img, target = self.getitem_from_id(video_id, seq_fids) # num_frame,H,W,3 #.permute(1,2,0,3)
+        else:
+            video_id = self.idx2vid[index]      
+            groundtruth = self.get_relation_insts(video_id)
+            
+            val_pos_frames= np.asarray(self.val_frame_meta[video_id], dtype=int)
+            seq_fids = np.argwhere(val_pos_frames).reshape(-1)
+            img, target = self.getitem_from_id(video_id, seq_fids)
+
+            target[0]['video_id'] = video_id
+            target[0]['groundtruth'] = groundtruth
+        
+        for i, gt in enumerate(target):
+            h, w = gt["size"]
+            img_resize = torch.as_tensor([w, h, w, h])
+            target[i]["unscaled_sub_boxes"] = box_cxcywh_to_xyxy(target[i]["sub_boxes"]) * img_resize
+            target[i]["unscaled_obj_boxes"] = box_cxcywh_to_xyxy(target[i]["obj_boxes"]) * img_resize
+        
+        return img, target
 
     def get_triplets(self):
         triplets = set()
@@ -155,19 +233,13 @@ class VRDBase(Dataset):
             triplets.update(inst['triplet'] for inst in insts)
         return triplets
     
-    def __getitem__(self, index):   
-        if self.stage==1:
-            return self.prepare_data_stage1(index)
-        else:
-            return self.prepare_data_stage2(index)
-
+    def parse_frame_name(self, frame_name):
+        video_id, begin_fid = frame_name.split("-")[-2:]
+        return "", video_id, begin_fid
+    
     # ==========
     # Test
     # ==========
-    def _check_anno(self, anno):
-        assert 'version' not in anno
-        return anno
-
     def load_raw_annotations(self, split):
         print('[info] loading raw annotations...')
         so = set()
@@ -175,8 +247,8 @@ class VRDBase(Dataset):
         self.split_index = defaultdict(list)
         self.raw_annos = dict()
         
-        anno_files = self._get_anno_files(split)
-         
+        anno_files = self.get_anno_files(split)
+
         annos = dict()
         for path in tqdm(anno_files):
             with open(path, 'r') as fin:
@@ -308,6 +380,69 @@ class VRDBase(Dataset):
             relation_insts.append(inst)
             
         return relation_insts
-    
-    def _get_anno_files(self, split):
+
+    # Backup
+    def fid2int(self, frame_ids):
         raise NotImplementedError
+
+    def is_cls_mismatch(self, video_id, begin_fid, end_fid):
+        begin_anno = self.annotations[video_id]["frame_annos"][begin_fid]
+        end_anno = self.annotations[video_id]['frame_annos'][end_fid]
+        begin_so_ids, end_so_ids = begin_anno['so_track_ids'], end_anno['so_track_ids']
+        assert len(begin_so_ids)==len(end_so_ids)
+        for i, begin_so_id in enumerate(begin_so_ids):
+            import pdb;pdb.set_trace()
+            
+            
+def make_video_transforms(split, cautious=True, by_ratio=False, resolution="large", overflow_boxes=False):
+    """
+    :param cautious: whether to preserve bounding box annotations in the spatial random crop
+    :return: composition of spatial data transforms to be applied to every frame of a video
+    """
+    normalize = T.Compose([
+         T.ToTensor(), 
+         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
+    )
+    horizontal = [] if cautious else [T.RandomHorizontalFlip()]
+    
+    if resolution=="small":
+        scales = [288, 320, 352, 384, 416, 448, 480]
+        max_size = 800
+        resizes = [240, 300, 360]
+        crop = 240
+    elif resolution=="middle":
+        scales = [384, 416, 448, 480, 512, 544, 576, 608, 640]
+        max_size = 1000
+        resizes = [300, 400, 500]
+        crop = 300
+    else:
+        scales = [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
+        max_size = 1333
+        resizes = [400, 500, 600]
+        crop = 384
+
+    test_size = [800]
+    scale = [0.8, 1.0]
+    
+    if split == "train":
+        transforms = horizontal + [
+            T.RandomSelect(
+                T.RandomResize(scales, max_size=max_size),
+                T.Compose(
+                    [
+                        T.RandomResize(resizes),
+                        T.RandomSizeCrop(crop, max_size, scale, 
+                                         respect_boxes=cautious, 
+                                         by_ratio=by_ratio,
+                                         overflow_boxes=overflow_boxes),
+                        T.RandomResize(scales, max_size=max_size),
+                    ]
+                ),
+            ),
+            normalize
+        ]
+
+    else:
+        transforms = [T.RandomResize(test_size, max_size=max_size), normalize]
+
+    return T.Compose(transforms)

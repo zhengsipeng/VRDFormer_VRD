@@ -9,10 +9,11 @@ import time
 import torch
 import datetime
 import torch.distributed as dist
+import torch.nn.functional as F
 from typing import List, Optional
 from torch import Tensor
 from collections import defaultdict, deque
-from util.dist import get_world_size
+from util.dist import get_world_size, is_dist_avail_and_initialized
 
 
 class MetricLogger(object):
@@ -211,7 +212,7 @@ class NestedTensor(object):
         return self.tensors, self.mask
 
     def select_frame(self, fid):
-        return NestedTensor(self.tensors[fid].unsqueeze(0), self.mask[fid].unsqueeze(0))
+        return NestedTensor(self.tensors[fid: fid+1], self.mask[fid: fid+1])
 
     def __repr__(self):
         return str(self.tensors)
@@ -233,6 +234,8 @@ class NestedTensor(object):
         if tensor_list[0].ndim == 3:
             # TODO make it support different-sized images
             max_size = _max_by_axis([list(img.shape) for img in tensor_list])
+         
+            #import pdb;pdb.set_trace()
             # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
             batch_shape = [len(tensor_list)] + max_size
             b, c, h, w = batch_shape
@@ -254,6 +257,7 @@ class NestedTensor(object):
             max_size = tuple(max(s) for s in zip(*[clip.shape for clip in tensor_list]))  
             batch_shape = (len(tensor_list),) + max_size
             b, c, t, h, w = batch_shape
+
             assert b==1  # now batchsize is fixed as 1
             if do_round:
                 # Round to an even size to avoid rounding issues in fpn
@@ -355,4 +359,42 @@ def target_to_cuda(target):
 
     return _target
 
+
+def sigmoid_focal_loss(inputs, targets, num_trajs, alpha:float=0.25, 
+                       gamma:float=2, query_mask=None, reduction=True):
+
+    """
+    Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+        alpha: (optional) Weighting factor in range (0,1) to balance
+                positive vs negative examples. Default = -1 (no weighting).
+        gamma: Exponent of the modulating factor (1 - p_t) to
+               balance easy vs hard examples.
+    Returns:
+        Loss tensor
+    """
+    prob = inputs.sigmoid()
+
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    p_t = prob * targets + (1 - prob) * (1 - targets)
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
+
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+    
+    if not reduction:
+        return loss
+
+    if query_mask is not None:
+        loss = torch.stack([l[m].mean(0) for l, m in zip(loss, query_mask)])
+        return loss.sum() / num_trajs
+    
+    return loss.mean(1).sum() / num_trajs
 

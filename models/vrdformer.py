@@ -53,6 +53,7 @@ class VRDFormer(nn.Module):
         
         self.sub_class_embed = nn.Linear(hidden_dim, num_obj_classes+1)
         self.obj_class_embed = nn.Linear(hidden_dim, num_obj_classes+1)
+     
         self.verb_class_embed = nn.Linear(hidden_dim, num_verb_classes)
         self.sub_bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.obj_bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
@@ -137,6 +138,7 @@ class VRDFormer(nn.Module):
                - samples.tensors: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
         """
+
         if not isinstance(samples, NestedTensor):
             samples = NestedTensor.from_tensor_list(samples) 
         features, pos = self.backbone(samples)  # [2,2048,20,24], [2,256,20,24]
@@ -153,6 +155,8 @@ class VRDFormer(nn.Module):
         pos_list = []
         
         frame_features = [prev_features, features]  # 2,3,2,C,H,W
+        if frame_features[0][0].tensors.shape != frame_features[1][0].tensors.shape:
+            import pdb;pdb.set_trace()
         if not self.multi_frame_attention:
             frame_features = [features]
 
@@ -161,13 +165,14 @@ class VRDFormer(nn.Module):
                 pos_list.extend([p[:, frame] for p in pos[-3:]])  # 3,2,c,H,W
             else:
                 pos_list.extend(pos[-3:])
+                
             for l, feat in enumerate(frame_feat): 
                 src, mask = feat.decompose()
                 
                 if self.merge_frame_features:
                     prev_src, _ = prev_features[l].decompose()
                     src_list.append(self.merge_features[l](torch.cat([self.input_proj[l](src), 
-                                                                      self.input_proj[l](prev_src)], dim=1)))
+                                                                    self.input_proj[l](prev_src)], dim=1)))
                 else:
                     src_list.append(self.input_proj[l](src))
 
@@ -184,7 +189,7 @@ class VRDFormer(nn.Module):
                             src = self.input_proj[l](frame_feat[-1].tensors)
                     else:
                         src = self.input_proj[l](src_list[-1])
-           
+        
                     _, m = frame_feat[0].decompose()
                     mask = F.interpolate(m[None].float(), size=src.shape[-2:]).to(torch.bool)[0]
 
@@ -203,7 +208,7 @@ class VRDFormer(nn.Module):
                                     src_list, mask_list, pos_list, 
                                     query_embed, 
                                     targets)
-        
+       
         if not self.deformable:
             hs = hs.transpose(1, 2)
             memory = memory.transpose(0, 1)

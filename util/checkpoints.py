@@ -21,10 +21,11 @@ def resume_value_deformable(model_state_dict, checkpoint_state_dict, resume_shif
                     resume_value = torch.cat([checkpoint_value, 
                                                 checkpoint_value[:cls_num_dict]], dim=0)
             elif "bbox_embed" in k:
-                resume_value = checkpoint_state_dict[checkpoint_k]
+                checkpoint_value = checkpoint_state_dict[checkpoint_k]
+                resume_value = checkpoint_value
             else:
                 raise NotImplementedError(f"No rule for {k} with shape {v.shape}.")
-                
+      
             print(f"Load {k} {tuple(v.shape)} from resume model"
                     f"{tuple(checkpoint_value.shape)}.")
 
@@ -32,10 +33,12 @@ def resume_value_deformable(model_state_dict, checkpoint_state_dict, resume_shif
         elif v.shape != checkpoint_state_dict[k].shape:
             checkpoint_value = checkpoint_state_dict[k]
             num_dims = len(checkpoint_value.shape)
-            
+            import pdb;pdb.set_trace()
             if 'norm' in k:
+                import pdb;pdb.set_trace()
                 resume_value = checkpoint_value.repeat(2)
             elif 'multihead_attn' in k or 'self_attn' in k:
+                import pdb;pdb.set_trace()
                 resume_value = checkpoint_value.repeat(num_dims * (2, ))
             elif 'reference_points' in k and checkpoint_value.shape[0] * 2 == v.shape[0]:
                 import pdb;pdb.set_trace()
@@ -56,13 +59,13 @@ def resume_value_deformable(model_state_dict, checkpoint_state_dict, resume_shif
                 elif checkpoint_value.shape[0] < v.shape[0]:
                     resume_value = v
             elif 'linear2' in k or 'input_proj' in k:
-                import pdb;pdb.set_trace()
                 resume_value = checkpoint_value.repeat((2,) + (num_dims - 1) * (1, ))
             else:
                 raise NotImplementedError(f"No rule for {k} with shape {v.shape}.")
             
             print(f"Load {k} {tuple(v.shape)} from resume model "
                     f"{tuple(checkpoint_value.shape)}.")
+            
         elif resume_shift_neuron and 'class_embed' in k:
             checkpoint_value = checkpoint_state_dict[k]
             # no-object class
@@ -77,6 +80,7 @@ def resume_value_deformable(model_state_dict, checkpoint_state_dict, resume_shif
             resume_value = checkpoint_state_dict[k]
 
         resume_state_dict[k] = resume_value
+    
     return resume_state_dict
         
         
@@ -155,7 +159,21 @@ def resume_value(model_state_dict, checkpoint_state_dict):
         
     return resume_state_dict
             
-            
+
+def resume_stage2(model_state_dict, checkpoint_state_dict):
+    resume_state_dict = dict()
+    for k, v in model_state_dict.items(): 
+        if k not in checkpoint_state_dict:
+            continue
+        if v.shape != checkpoint_state_dict[k].shape:
+            resume_value = checkpoint_state_dict[k][:int(checkpoint_state_dict[k].shape[0]/2)]
+        else:
+            resume_value = checkpoint_state_dict[k]
+        resume_state_dict[k] = resume_value
+
+    return resume_state_dict
+
+
 def param_initializer(args, model_without_ddp, optimizer, lr_scheduler):
     if args.resume:
         print("Loading checkpoint from %s"%args.resume)
@@ -178,11 +196,15 @@ def param_initializer(args, model_without_ddp, optimizer, lr_scheduler):
         checkpoint_state_dict = checkpoint['model']
         checkpoint_state_dict = {k.replace('detr.', ''): v for k, v in checkpoint['model'].items()}
         
-        if args.deformable:
+        if args.stage==2:
+            resume_state_dict = resume_stage2(model_state_dict, 
+                                              checkpoint_state_dict,)
+        elif args.deformable:
             resume_state_dict = resume_value_deformable(model_state_dict, 
                                                         checkpoint_state_dict, 
                                                         args.resume_shift_neuron)
         else:
             resume_state_dict = resume_value(model_state_dict, checkpoint_state_dict)
-                
-        model_without_ddp.load_state_dict(resume_state_dict)
+        
+        model_without_ddp.load_state_dict(resume_state_dict, strict=False)
+        #import pdb;pdb.set_trace()

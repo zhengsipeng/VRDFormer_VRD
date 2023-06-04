@@ -10,20 +10,18 @@ def build_model(args):
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
-    if args.stage==1:
-        if args.deformable:
-            from .deformable_transformer import build_deformable_transformer as build_transformer
-        else:
-            from .transformer import build_transformer
+
+    if args.deformable:
+        from .deformable_transformer import build_deformable_transformer as build_transformer
     else:
-        from .transformer_stage2 import build_transformer
-    
+        from .transformer import build_transformer
+
     transformer = build_transformer(args)
         
     matcher = build_matcher(args) if args.stage==1 else None
     
-    num_obj_classes = 80 if args.dataset == 'vidor' else 35
-    num_verb_classes = 42 if args.dataset == 'vidor' else 132  # multi-label
+    num_obj_classes = 80 if 'vidor' in args.dataset else 35
+    num_verb_classes = 50 if 'vidor' in args.dataset else 132  # multi-label
     
     detr_kwargs = {
         'backbone': backbone,
@@ -51,18 +49,22 @@ def build_model(args):
             'matcher': matcher,
             'backprop_prev_frame': args.track_backprop_prev_frame
         }
+        
         if args.tracking:
             model = VRDFormerTracking(tracking_kwargs, detr_kwargs)
         else:
             model = VRDFormer(**detr_kwargs)
-        losses = ["labels", "verb_labels"]
+        losses = ["labels", "verb_labels", 'cardinality', "boxes"]
     else:
-        from .vrdformer_stage2 import VRDFormer, SetCriterion
-        losses = ["sub_labels", "obj_labels", "verb_labels"]
+        from .vrdformer_stage2 import VRDFormer_S2 as VRDFormer
+        from .vrdformer_stage2 import SetCriterion
+        losses = ["labels", "verb_labels"]
         model = VRDFormer(**detr_kwargs)
         
     weight_dict = {'loss_ce': args.obj_loss_coef,
-                   'loss_verb_ce': args.verb_loss_coef,}
+                   'loss_ce_verb': args.verb_loss_coef,
+                   'loss_bbox': args.bbox_loss_coef,
+                   'loss_giou': args.giou_loss_coef}
     
     # TODO this is a hack
     if args.aux_loss:
@@ -74,6 +76,7 @@ def build_model(args):
     
     criterion = SetCriterion(
         num_obj_classes,
+        num_verb_classes,
         matcher=matcher,
         weight_dict=weight_dict,
         eos_coef=args.eos_coef,

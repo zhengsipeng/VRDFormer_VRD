@@ -7,6 +7,7 @@ By default, the reduce of metrics and such are done on GPU, since it's more stra
 If you want to reduce on CPU instead (required for big datasets like GQA), use the env variable MDETR_CPU_REDUCE=1
 """
 import functools
+import subprocess
 import io
 import os
 

@@ -11,6 +11,7 @@ import copy
 from typing import Optional
 import torch
 import torch.nn.functional as F
+from torchvision.ops import roi_align
 from torch.nn.init import normal_
 from torch import Tensor, nn
 
@@ -20,9 +21,11 @@ class Transformer(nn.Module):
                  num_decoder_layers=6, num_queries=100, dim_feedforward=2048, dropout=0.1,
                  activation="relu", num_feature_levels=1,
                  normalize_before=False, return_intermediate_dec=False,
-                 track_attention=False, multi_frame_attention_separate_encoder=False):
+                 track_attention=False, multi_frame_attention_separate_encoder=False, stage=1):
         super().__init__()
+        self.stage = stage
         self.num_feature_levels = num_feature_levels
+        #num_lvl = num_feature_levels if stage==1 else num_feature_levels*2
         self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))
         self.multi_frame_attention_separate_encoder = multi_frame_attention_separate_encoder
         enc_num_feature_levels = num_feature_levels
@@ -47,10 +50,21 @@ class Transformer(nn.Module):
         self.d_model = d_model
         self.nhead = nhead
 
-        # Relation Module
-        self.num_queries = num_queries
-        self.so_linear = nn.Linear(self.d_model*2, self.d_model)
-  
+
+
+        if self.stage==2:
+            # Relation Module
+            self.num_queries = num_queries
+            self.so_linear = nn.Linear(self.d_model*2, self.d_model)
+            # ROI Pooling
+            self.roi_output_scales = [[7,7]] #[[7, 7], [7, 7], [7, 7], [3, 3]]
+            self.downsample_scales = [32] #[8,16,32,64]
+            self.roi_pool_type = "avg"
+            if self.roi_pool_type == 'avg':
+                self.roi_pool_layer = nn.AvgPool2d(kernel_size=self.roi_output_scales[-1])
+            elif self.roi_pool_type == "max":
+                self.roi_pool_layer = nn.MaxPool2d(kernel_size=self.roi_output_scales[-1])
+    
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
@@ -58,6 +72,34 @@ class Transformer(nn.Module):
 
         normal_(self.level_embed)
 
+    def extract_roi_feat(self, src, boxes):
+        box_fts = roi_align(src, 
+                            torch.cat([torch.full((len(boxes), 1), 0).cuda(), boxes], dim=1), 
+                            self.roi_output_scales[-1], 
+                            spatial_scale=1./self.downsample_scales[-1], 
+                            sampling_ratio=-1
+                        )  
+        return self.roi_pool_layer(box_fts).squeeze(2).squeeze(2)
+    
+    def prepare_tag_query(self, so_embed, targets):
+        # during relation tag, the query embed is initialized by roi feats of boxes
+        num_svo = targets["num_inst"]
+        query_sboxes = torch.zeros((self.num_queries, 4)).cuda()
+        query_oboxes = torch.zeros((self.num_queries, 4)).cuda()
+        query_embed = torch.zeros((self.num_queries, self.d_model)).cuda()
+        query_masks = torch.ones(self.num_queries).bool().cuda()
+
+        query_embed[:num_svo] = so_embed
+        query_embed = query_embed.unsqueeze(0)
+
+        query_sboxes[:num_svo] = targets["sub_boxes"]
+        query_oboxes[:num_svo] = targets["obj_boxes"]
+        
+        query_masks[:num_svo] = 0
+        query_masks = query_masks.unsqueeze(0)
+
+        return query_embed
+    
     def forward(self, srcs, masks, pos_embeds, query_embed=None, targets=None):
         src_flatten = []
         mask_flatten = []
@@ -80,7 +122,7 @@ class Transformer(nn.Module):
         # encoder
         src_flatten = src_flatten.transpose(0, 1)  # seq_len,bs,c
         lvl_pos_embed_flatten = lvl_pos_embed_flatten.transpose(0, 1)
-        
+
         if self.multi_frame_attention_separate_encoder:  
             prev_memory = self.encoder(
                 src_flatten[:src_flatten.shape[0] // 2, :],
@@ -93,9 +135,31 @@ class Transformer(nn.Module):
             
             memory = torch.cat([memory, prev_memory], 0)
         else:
-            memory = self.encoder(src_flatten, lvl_pos_embed_flatten, mask_flatten)
+            memory = self.encoder(src_flatten, 
+                                  pos=lvl_pos_embed_flatten, 
+                                  src_key_padding_mask=mask_flatten)
         
-        # flatten NxCxHxW to HWxNxC
+        if self.stage == 2:
+
+            # individual s_embed and o_embed are extracted from the encoder
+            s_embed = self.extract_roi_feat(srcs[-1], targets["unscaled_sub_boxes"])  
+            o_embed = self.extract_roi_feat(srcs[-1], targets["unscaled_obj_boxes"])
+            so_embed = self.so_linear(torch.cat([s_embed, o_embed], dim=1)) 
+            query_embed = self.prepare_tag_query(so_embed, targets)
+            query_embed = query_embed.permute(1, 0, 2)
+            
+            tgt = torch.zeros_like(query_embed)
+
+            hs = self.decoder( 
+                tgt,  
+                memory,   
+                memory_key_padding_mask=mask_flatten,
+                pos=lvl_pos_embed_flatten, 
+                query_pos=query_embed,
+            )
+            
+            return hs.transpose(1, 2), s_embed, o_embed
+            
         _, bs, c = memory.shape
         query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
         query_embed, tgt = torch.split(query_embed, c, dim=2) 
@@ -110,7 +174,7 @@ class Transformer(nn.Module):
             prev_tgt = prev_hs_embed
             query_embed = torch.cat([prev_query_embed, query_embed], dim=0)
             tgt = torch.cat([prev_tgt, tgt], dim=0)
-            
+        
         hs = self.decoder( 
             tgt,  
             memory,   
@@ -234,6 +298,7 @@ class TransformerEncoderLayer(nn.Module):
                      pos: Optional[Tensor] = None):
         
         q = k = self.with_pos_embed(src, pos)
+
         src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
                               key_padding_mask=src_key_padding_mask)[0]
         src = src + self.dropout1(src2)
@@ -383,5 +448,6 @@ def build_transformer(args):
         normalize_before=args.pre_norm,
         return_intermediate_dec=True,
         track_attention=args.track_attention,
-        multi_frame_attention_separate_encoder=args.multi_frame_attention_separate_encoder
+        multi_frame_attention_separate_encoder=args.multi_frame_attention_separate_encoder,
+        stage=args.stage
     )

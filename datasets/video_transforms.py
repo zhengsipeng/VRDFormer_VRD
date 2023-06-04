@@ -176,6 +176,7 @@ class Compose(object):
     def __call__(self, video, targets):
         for t in self.transforms:
             video, targets = t(video, targets)
+        
         return video, targets
 
     def __repr__(self):
@@ -242,9 +243,10 @@ class RandomHorizontalFlip(object):
     def __init__(self, p=0.5):
         self.p = p
         
-    def __call__(self, video, targets):
+def __call__(self, video, targets):
         if random.random() < self.p:
-            return hflip(video, targets)
+            flipped_clip, targets = hflip(video, targets)
+            return flipped_clip, targets
         return video, targets
 
 
@@ -353,19 +355,21 @@ class RandomResize(object):
 
     def __call__(self, video, target=None):
         size = random.choice(self.sizes)
-        return resize(video, target, size, self.max_size)
+        rescaled_clip, targets = resize(video, target, size, self.max_size)
+        return rescaled_clip, targets
 
 
-def crop(clip, orig_targets, region, target_only=False, overflow_boxes=False):
+def crop(clip, targets, region, target_only=False, overflow_boxes=False):
     if not target_only:
         cropped_clip = crop_clip(clip, *region)
         # cropped_clip = [F.crop(img, *region) for img in clip] # other possibility is to use torch_videovision.torchvideotransforms.functional.crop_clip
 
-    targets = copy.deepcopy(orig_targets)
+
+    targets = copy.deepcopy(targets)
     i, j, h, w = region
     
     # should we do something wrt the original size?
-    for i_tgt in range(len(targets)):  # TODO: not sure if it is needed to do for all images from the clip
+    for i_tgt in range(len(targets)): 
         targets[i_tgt]["size"] = torch.tensor([h, w])
 
     fields = ['sub_area', 'obj_area', 'so_track_ids', 
@@ -455,7 +459,7 @@ class RandomSizeCrop(object):
         area = height * width
 
         log_ratio = torch.log(torch.tensor(ratio))
-
+        
         for _ in range(20):
             target_area = area * torch.empty(1).uniform_(scale[0], scale[1]).item()
             aspect_ratio = torch.exp(torch.empty(1).uniform_(log_ratio[0], log_ratio[1])).item()
@@ -474,7 +478,7 @@ class RandomSizeCrop(object):
         
         return clip, orig_targets
 
-    def __call__(self, clip, targets: dict):
+    def __call__(self, clip, targets):
         orig_targets = copy.deepcopy(targets)  # used to conserve ALL BOXES ANYWAY
         init_sboxes = sum(len(targets[i_tgt]["sub_boxes"]) for i_tgt in range(len(targets)))
         init_oboxes = sum(len(targets[i_tgt]["obj_boxes"]) for i_tgt in range(len(targets)))
@@ -492,11 +496,11 @@ class RandomSizeCrop(object):
         if self.by_ratio:
             result_clip, result_targets = self.resize_by_ratio(clip, targets, init_sboxes, init_oboxes, h, w, self.scale) 
             return result_clip, result_targets
-        
+      
         for _ in range(max_patience):
             tw = random.randint(self.min_size, min(w, self.max_size))
             th = random.randint(self.min_size, min(h, self.max_size))
-        
+            
             ##region = T.RandomCrop.get_params(clip[0], [th, tw]) # h w sizes are the same for all images of the clip; we can just get parameters for the first image
             
             if h + 1 < th or w + 1 < tw:
@@ -509,8 +513,7 @@ class RandomSizeCrop(object):
                 i = torch.randint(0, h - th + 1, size=(1,)).item()
                 j = torch.randint(0, w - tw + 1, size=(1,)).item()
                 region = i, j, th, tw
-            
-            #result_clip, result_targets = crop(clip, targets, region)
+
             result_targets = crop(clip, targets, region, target_only=True,
                                   overflow_boxes=self.overflow_boxes)  # to speed up sbox/obox_sum calculation, only crop target
             sbox_sum = sum(len(result_targets[i_patience]["sub_boxes"])for i_patience in range(len(result_targets)))
@@ -519,5 +522,5 @@ class RandomSizeCrop(object):
             if (not self.respect_boxes) or ((sbox_sum==init_sboxes) and (obox_sum==init_oboxes)):
                 result_clip, result_targets = crop(clip, targets, region)
                 return result_clip, result_targets
-        
+
         return clip, orig_targets
