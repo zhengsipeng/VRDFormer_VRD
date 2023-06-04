@@ -1,6 +1,6 @@
 python -m torch.distributed.launch \
-        --master_port 47749 \
+        --master_port 47755 \
         --nproc_per_node=8 main.py \
-        --accumulate_steps 4 \
+        --accumulate_steps 2 \
         --lr_backbone 1e-5 --lr 5e-5 --num_queries 200 \
-        --dataset_config configs/vidvrd_stage1_deform.json
+        --dataset_config configs/vidor_stage1_deform.json
